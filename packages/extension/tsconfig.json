@@ -7,7 +7,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    "types": ["vite/client", "node", "vite-plugin-pwa/client"]
+    "types": ["chrome", "node"]
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "vite.config.ts", "env.d.ts"]
 }

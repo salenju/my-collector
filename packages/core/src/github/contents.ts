@@ -85,6 +85,23 @@ export class ContentsApi {
     };
   }
 
+  /**
+   * 读取一个文本文件；文件不存在时返回 null（而不是抛错）。
+   * 用于「首次写入某个月的分片」「标签文件还没建」这类正常缺失场景。
+   */
+  async getTextOrNull(
+    path: string,
+    etag?: string | null,
+    signal?: AbortSignal,
+  ): Promise<FileFetchResult | null> {
+    try {
+      return await this.getText(path, etag, signal);
+    } catch (error) {
+      if (error instanceof GhError && error.kind === 'not-found') return null;
+      throw error;
+    }
+  }
+
   /** 文件是否存在（用于区分「未初始化」与「网络问题」） */
   async exists(path: string): Promise<boolean> {
     try {

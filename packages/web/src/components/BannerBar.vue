@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import { CircleAlert, CloudOff, TriangleAlert, WifiOff } from '@lucide/vue';
+import { computed, ref } from 'vue';
+import {
+  CircleAlert,
+  CircleCheck,
+  CloudOff,
+  Download,
+  TriangleAlert,
+  WifiOff,
+  X,
+} from '@lucide/vue';
 import { RouterLink } from 'vue-router';
 import { useSyncStore } from '@/stores/sync';
 import { useSettingsStore } from '@/stores/settings';
 import { useAppStore } from '@/stores/app';
+import { usePwa } from '@/composables/usePwa';
 
-type Tone = 'brand' | 'warn' | 'danger' | 'muted';
+type Tone = 'brand' | 'ok' | 'warn' | 'danger' | 'muted';
 
 interface Banner {
   key: string;
@@ -15,14 +24,21 @@ interface Banner {
   text: string;
   actionLabel?: string;
   actionTo?: string;
+  onAction?: () => void;
+  /** 显示右侧关闭按钮 */
+  dismissible?: boolean;
 }
 
 const app = useAppStore();
 const sync = useSyncStore();
 const settings = useSettingsStore();
+const pwa = usePwa();
+
+const installDismissed = ref(false);
 
 const TONES: Record<Tone, string> = {
   brand: 'border-brand/30 bg-brand/10 text-ink',
+  ok: 'border-ok/30 bg-ok/10 text-ink',
   warn: 'border-warn/30 bg-warn/10 text-ink',
   danger: 'border-danger/30 bg-danger/10 text-ink',
   muted: 'border-line bg-elevated text-muted',
@@ -31,6 +47,44 @@ const TONES: Record<Tone, string> = {
 const banners = computed<Banner[]>(() => {
   const list: Banner[] = [];
 
+  // ── PWA：新版本就绪（不自动刷新，由用户决定）──
+  if (pwa.needRefresh.value) {
+    list.push({
+      key: 'pwa-update',
+      tone: 'brand',
+      icon: CircleAlert,
+      text: '满天星有新版本可用。刷新即会更新，当前未保存的输入会丢失。',
+      actionLabel: '立即更新',
+      onAction: () => void pwa.applyUpdate(),
+      dismissible: true,
+    });
+  }
+
+  // ── PWA：已可离线使用 ──
+  if (pwa.offlineReady.value) {
+    list.push({
+      key: 'pwa-offline-ready',
+      tone: 'ok',
+      icon: CircleCheck,
+      text: '已缓存应用外壳，现在断网也能打开并记录。',
+      dismissible: true,
+    });
+  }
+
+  // ── PWA：可安装到主屏 ──
+  if (pwa.canInstall.value && !installDismissed.value) {
+    list.push({
+      key: 'pwa-install',
+      tone: 'brand',
+      icon: Download,
+      text: '把满天星安装到主屏幕，打开更快，手机上还能从分享菜单直接收藏。',
+      actionLabel: '安装',
+      onAction: () => void pwa.promptInstall(),
+      dismissible: true,
+    });
+  }
+
+  // ── 未配置令牌 ──
   if (!settings.hasToken) {
     list.push({
       key: 'no-token',
@@ -42,6 +96,7 @@ const banners = computed<Banner[]>(() => {
     });
   }
 
+  // ── 令牌到期 ──
   const daysLeft = settings.tokenDaysLeft;
   if (settings.hasToken && daysLeft !== null && daysLeft < 0) {
     list.push({
@@ -63,6 +118,7 @@ const banners = computed<Banner[]>(() => {
     });
   }
 
+  // ── 离线 ──
   if (!app.online) {
     list.push({
       key: 'offline',
@@ -72,6 +128,7 @@ const banners = computed<Banner[]>(() => {
     });
   }
 
+  // ── 只读（远端 schema 更高）──
   if (sync.readOnly) {
     list.push({
       key: 'read-only',
@@ -81,6 +138,7 @@ const banners = computed<Banner[]>(() => {
     });
   }
 
+  // ── 冲突待处理 ──
   if (sync.status === 'conflict') {
     list.push({
       key: 'conflict',
@@ -92,6 +150,22 @@ const banners = computed<Banner[]>(() => {
 
   return list;
 });
+
+function dismiss(key: string): void {
+  switch (key) {
+    case 'pwa-update':
+      pwa.dismissUpdate();
+      break;
+    case 'pwa-offline-ready':
+      pwa.dismissOfflineReady();
+      break;
+    case 'pwa-install':
+      installDismissed.value = true;
+      break;
+    default:
+      break;
+  }
+}
 </script>
 
 <template>
@@ -105,6 +179,7 @@ const banners = computed<Banner[]>(() => {
     >
       <component :is="banner.icon" class="h-3.5 w-3.5 shrink-0" />
       <span class="flex-1">{{ banner.text }}</span>
+
       <RouterLink
         v-if="banner.actionTo"
         :to="banner.actionTo"
@@ -112,6 +187,22 @@ const banners = computed<Banner[]>(() => {
       >
         {{ banner.actionLabel }}
       </RouterLink>
+      <button
+        v-else-if="banner.onAction"
+        class="rounded border border-current px-2 py-0.5 text-xs font-medium hover:opacity-80"
+        @click="banner.onAction()"
+      >
+        {{ banner.actionLabel }}
+      </button>
+
+      <button
+        v-if="banner.dismissible"
+        class="rounded p-0.5 hover:opacity-70"
+        :aria-label="`关闭提示：${banner.key}`"
+        @click="dismiss(banner.key)"
+      >
+        <X class="h-3.5 w-3.5" />
+      </button>
     </div>
   </div>
 </template>

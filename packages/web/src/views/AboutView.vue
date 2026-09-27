@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ExternalLink, Globe, Lock, WifiOff } from '@lucide/vue';
 import { APP_TITLE, APP_VERSION } from '@/collector';
+import BookmarkletCard from '@/components/BookmarkletCard.vue';
 
 interface Shortcut {
   keys: string;
@@ -51,6 +52,8 @@ const dataFlows = [
         </li>
       </ul>
     </section>
+
+    <BookmarkletCard />
 
     <section class="card p-4">
       <h2 class="text-sm font-semibold">快捷键</h2>

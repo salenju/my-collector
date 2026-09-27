@@ -134,6 +134,45 @@ for (const route of TARGETS) {
   }
 }
 
+// PWA 附加检查：Service Worker 是否注册、manifest 是否可解析、图标是否可达
+await send('Page.navigate', { url: `${BASE}/` });
+await sleep(3000);
+
+const pwa = await send('Runtime.evaluate', {
+  awaitPromise: true,
+  returnByValue: true,
+  expression: `(async () => {
+    const out = {};
+    if (!('serviceWorker' in navigator)) {
+      out.sw = '不支持的浏览器';
+    } else {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      out.sw = regs.length === 0 ? '未注册' : regs.map((r) => r.scope).join(', ');
+    }
+    const link = document.querySelector('link[rel="manifest"]');
+    if (!link) {
+      out.manifest = '页面里没有 manifest link';
+    } else {
+      try {
+        const res = await fetch(link.href);
+        const json = await res.json();
+        out.manifest = json.name + ' · scope=' + json.scope + ' · share_target=' + (json.share_target ? '有' : '无');
+        const icon = json.icons && json.icons[0];
+        if (icon) {
+          const head = await fetch(new URL(icon.src, link.href));
+          out.icon = icon.src + ' -> ' + head.status + ' ' + (head.headers.get('content-type') || '');
+        }
+      } catch (error) {
+        out.manifest = '读取失败: ' + error;
+      }
+    }
+    return JSON.stringify(out, null, 2);
+  })()`,
+});
+
+console.log('\n─── PWA ───');
+console.log(pwa?.result?.value ?? '(检查失败)');
+
 socket.close();
 chrome.kill();
 process.exit(failed ? 1 : 0);

@@ -14,13 +14,19 @@
     "typecheck": "pnpm -r typecheck",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "icons": "node scripts/gen-icons.mjs",
+    "build:ext": "pnpm -F @my-collector/extension build",
+    "dev:ext": "pnpm -F @my-collector/extension dev"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
     "vitest": "^2.1.8"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "vue-demi"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "vue-demi"
+    ]
   }
 }
