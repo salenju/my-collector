@@ -1,0 +1,74 @@
+name: Deploy Web
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/web/**'
+      - 'packages/core/**'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-web.yml'
+  workflow_dispatch:
+
+# 部署到 GitHub Pages 需要：contents 读、pages 写、id-token 用于 OIDC
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只保留一个部署，新推送取消排队中的旧任务
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        run: pnpm -r typecheck
+
+      - name: 单元测试
+        run: pnpm test
+
+      - name: 构建
+        run: pnpm build
+
+      - name: 安全兜底检查（产物中不得出现真实令牌）
+        # 注意：SettingsView 里有 `github_pat_...` 这样的输入框占位符，属正常文本，
+        # 因此这里只匹配「前缀 + 至少 20 位字符」的真实令牌形态。
+        run: |
+          if grep -rIEn --exclude='*.map' 'github_pat_[A-Za-z0-9_]{20,}' packages/web/dist; then
+            echo "::error::构建产物中出现了疑似真实令牌内容"
+            exit 1
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,20 @@
+node_modules/
+dist/
+dist-ssr/
+coverage/
+.vite/
+*.zip
+*.log
+
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+.env
+.env.*
+!.env.example
+*.local
+
+# 安全兜底：任何位置出现 token 文件都不提交
+*.token
