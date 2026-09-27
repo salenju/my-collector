@@ -17,9 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 版本由根 package.json 的 packageManager 字段决定，见 deploy-web.yml 的说明
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
