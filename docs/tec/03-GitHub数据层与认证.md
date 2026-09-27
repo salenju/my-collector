@@ -238,7 +238,7 @@ README.md
 | 本地库 | 同一浏览器多标签页读写 Dexie | Dexie 原生基于 IndexedDB 事务，跨标签页安全；本应用所有写操作包在 `db.transaction('rw', ...)` 中 |
 
 > 单设备内不要用 `localStorage` 做锁（非原子）；`navigator.locks` 在现代浏览器（含 iOS Safari 15.4+）已可用，
-> 不可用时降级为"基于 Dexie 的 lease 记录 + 时间戳"，见 04 文档 §7。
+> 不可用时降级为**进程内互斥**，跨标签页并发交给 GitHub 的 CAS + 自动合并兜底，见 04 文档 §7。
 
 ## 6. 限流预算与优化
 

@@ -13,7 +13,7 @@ import {
   type Tag,
   type TagColor,
 } from '../model/types';
-import { nowIso } from '../utils/date';
+import { monthOf, nowIso } from '../utils/date';
 import { newItemId, newTagId } from '../utils/id';
 import { faviconFor, isSafeUrl, normalizeUrl } from '../utils/url';
 import type { SyncEngine } from '../sync/engine';
@@ -91,6 +91,34 @@ export class CollectorRepository {
   ): Promise<void> {
     await this.db.outbox.where('entityId').equals(entityId).delete();
     await this.db.outbox.add({ entity, entityId, action, at });
+  }
+
+  /**
+   * 登记「清理墓碑」待推送的分片（04 文档 §4.3）。
+   *
+   * 为什么不能像普通写操作那样按条目 id 入队：条目行已经被物理删掉，
+   * push 时无法再由 id 反推它属于哪个月份，因此这里按**分片**入队（entity='shard'），
+   * 由 push 把该月的整份文件按本地现状重写（重写后文件里不再有这条墓碑）。
+   *
+   * purgedIds 与 `replaceOps` 的覆盖语义不同：必须与已有记录**取并集**，
+   * 否则同一个月内分两次清理时，先登记的那批 id 会被后一次覆盖掉。
+   */
+  private async queueShardRewrite(
+    purgedByMonth: ReadonlyMap<string, readonly string[]>,
+    at: string,
+  ): Promise<void> {
+    for (const [month, ids] of purgedByMonth) {
+      const existing = await this.db.outbox.where('entityId').equals(month).toArray();
+      const previous = existing.find((row) => row.entity === 'shard')?.purgedIds ?? [];
+      await this.db.outbox.where('entityId').equals(month).delete();
+      await this.db.outbox.add({
+        entity: 'shard',
+        entityId: month,
+        action: 'upsert',
+        at,
+        purgedIds: [...new Set([...previous, ...ids])],
+      });
+    }
   }
 
   // ─────────────────────────── 条目 ───────────────────────────
@@ -183,12 +211,20 @@ export class CollectorRepository {
     await this.updateItem(id, { archived });
   }
 
-  /** 彻底移除本地记录（仅用于「清理墓碑」，会写回远端） */
+  /** 彻底移除本地记录（「清理墓碑」的单项版本），并让所在分片整体重写、写回远端 */
   async purgeItem(id: string): Promise<void> {
+    const existing = await this.db.items.get(id);
+    if (!existing) return;
+
+    const now = nowIso();
+    const month = monthOf(existing.createdAt);
     await this.db.transaction('rw', [this.db.items, this.db.outbox], async () => {
       await this.db.items.delete(id);
       await this.db.outbox.where('entityId').equals(id).delete();
+      await this.queueShardRewrite(new Map([[month, [id]]]), now);
     });
+
+    this.engine.schedulePush();
     this.engine.notifyLocalChange();
   }
 
@@ -354,7 +390,10 @@ export class CollectorRepository {
 
   // ─────────────────────────── 维护 ───────────────────────────
 
-  /** 清理超过指定天数的墓碑（物理移除，Git 历史仍可找回） */
+  /**
+   * 清理超过指定天数的墓碑：本地物理移除，并把涉及的分片整体重写回远端
+   * （该变更是一次 commit，Git 历史里仍可找回）。见 04 文档 §4.3。
+   */
   async purgeTombstones(olderThanDays = 90): Promise<number> {
     const cutoff = new Date(Date.now() - olderThanDays * 86_400_000).toISOString();
     const tombstones = await this.db.items.filter(
@@ -362,7 +401,22 @@ export class CollectorRepository {
     ).toArray();
 
     if (tombstones.length === 0) return 0;
-    await this.db.items.bulkDelete(tombstones.map((item) => item.id));
+
+    const now = nowIso();
+    const purgedByMonth = new Map<string, string[]>();
+    for (const item of tombstones) {
+      const month = monthOf(item.createdAt);
+      const bucket = purgedByMonth.get(month);
+      if (bucket) bucket.push(item.id);
+      else purgedByMonth.set(month, [item.id]);
+    }
+
+    await this.db.transaction('rw', [this.db.items, this.db.outbox], async () => {
+      await this.db.items.bulkDelete(tombstones.map((item) => item.id));
+      await this.queueShardRewrite(purgedByMonth, now);
+    });
+
+    this.engine.schedulePush();
     this.engine.notifyLocalChange();
     return tombstones.length;
   }

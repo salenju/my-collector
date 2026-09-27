@@ -237,6 +237,113 @@ describe('SyncEngine · 推送', () => {
   });
 });
 
+describe('SyncEngine · 清理墓碑', () => {
+  it('清理后把所在分片整体重写回远端，文件里不再有墓碑，其他月份不受影响', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.engine.initializeRepo();
+
+      // 故意跨两个月，验证只重写受影响的分片
+      const august = await harness.repo.createItem({
+        title: '八月的记录',
+        createdAt: '2026-08-15T00:00:00.000Z',
+        source: 'web',
+      });
+      const current = await harness.repo.createItem({ title: '本月的记录', source: 'web' });
+      await harness.engine.push();
+
+      await harness.repo.deleteItem(august.id);
+      await harness.engine.push();
+
+      const augustShard = shardPath(CFG, '2026-08');
+      const currentMonth = current.createdAt.slice(0, 7);
+      const currentShard = shardPath(CFG, currentMonth);
+      expect(JSON.parse(fake.files.get(augustShard) ?? '{"items":[]}').items).toHaveLength(1);
+
+      const count = await harness.repo.purgeTombstones(0);
+      expect(count).toBe(1);
+
+      // 入队的是一个「分片重写」操作，并带上被清理的 id
+      const queued = await harness.db.outbox.toArray();
+      expect(queued).toHaveLength(1);
+      expect(queued[0]?.entity).toBe('shard');
+      expect(queued[0]?.entityId).toBe('2026-08');
+      expect(queued[0]?.purgedIds).toEqual([august.id]);
+
+      const before = fake.commitCount();
+      await harness.engine.push();
+      expect(fake.commitCount()).toBe(before + 1);
+
+      // 远端分片被物理移除该条；其他月份的分片内容不受影响
+      expect(JSON.parse(fake.files.get(augustShard) ?? '{"items":[]}').items).toHaveLength(0);
+      const untouched = JSON.parse(fake.files.get(currentShard) ?? '{"items":[]}');
+      expect(untouched.items.map((item: Item) => item.title)).toEqual(['本月的记录']);
+      expect(await harness.db.outbox.count()).toBe(0);
+      expect(harness.engine.getState().status).toBe('synced');
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it('同一个月分两次清理时，purgedIds 取并集而不是被覆盖', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.engine.initializeRepo();
+      const a = await harness.repo.createItem({ title: 'A', source: 'web' });
+      const b = await harness.repo.createItem({ title: 'B', source: 'web' });
+      await harness.engine.push();
+      await harness.repo.deleteItem(a.id);
+      await harness.repo.deleteItem(b.id);
+      await harness.engine.push();
+
+      await harness.repo.purgeItem(a.id);
+      await harness.repo.purgeItem(b.id);
+
+      const queued = await harness.db.outbox.toArray();
+      expect(queued).toHaveLength(1);
+      expect(queued[0]?.entity).toBe('shard');
+      expect([...(queued[0]?.purgedIds ?? [])].sort()).toEqual([a.id, b.id].sort());
+    } finally {
+      await harness.dispose();
+    }
+  });
+
+  it('清理后若先拉取（远端仍带墓碑）也不会把墓碑拉回本地', async () => {
+    const harness = await createHarness();
+    try {
+      await harness.engine.initializeRepo();
+      const created = await harness.repo.createItem({ title: '待清理', source: 'web' });
+      await harness.engine.push();
+      await harness.repo.deleteItem(created.id);
+      await harness.engine.push();
+
+      const month = created.createdAt.slice(0, 7);
+      const shard = shardPath(CFG, month);
+
+      await harness.repo.purgeTombstones(0);
+      expect(await harness.db.items.get(created.id)).toBeUndefined();
+
+      // 模拟另一台设备改动了这个分片（sha 变化 → 本次 pull 真的会去读它）
+      const remote = JSON.parse(fake.files.get(shard) ?? '{"items":[]}');
+      remote.items[0].updatedAt = new Date(Date.parse(created.updatedAt) + 60_000).toISOString();
+      fake.forceWrite(shard, JSON.stringify(remote, null, 2));
+
+      await harness.engine.pull();
+
+      // 没有被复活，且记账为 purged
+      expect(await harness.db.items.get(created.id)).toBeUndefined();
+      expect(harness.engine.getState().conflictLog.some((entry) => entry.reason === 'purged')).toBe(true);
+
+      // 待推送的重写操作仍在，推送后远端文件里彻底没有它
+      expect(await harness.db.outbox.count()).toBe(1);
+      await harness.engine.push();
+      expect(JSON.parse(fake.files.get(shard) ?? '{"items":[]}').items).toHaveLength(0);
+    } finally {
+      await harness.dispose();
+    }
+  });
+});
+
 describe('SyncEngine · 拉取', () => {
   it('另一台设备能拉取到同样的数据', async () => {
     const deviceA = await createHarness();

@@ -6,7 +6,7 @@
  */
 import type { Item, MergePolicy, Tag } from '../model/types';
 
-export type ConflictReason = 'lww' | 'delete-policy' | 'same-timestamp-differs';
+export type ConflictReason = 'lww' | 'delete-policy' | 'same-timestamp-differs' | 'purged';
 
 export interface MergeConflict {
   entity: 'item' | 'tag';
@@ -27,6 +27,11 @@ export interface MergeOptions {
   now: string;
   /** 本地存在未推送操作的实体 id 集合 */
   pending: ReadonlySet<string>;
+  /**
+   * 本地已「清理墓碑」（物理移除）但对应分片尚未推送成功的条目 id。
+   * 此刻远端文件里仍带着这些墓碑，若照常采纳就会把它们拉回本地、让清理白做。
+   */
+  purged?: ReadonlySet<string>;
 }
 
 export interface MergeOutcome<T> {
@@ -112,6 +117,22 @@ function mergeCollection<T extends Mergeable>(
       continue;
     }
     if (!local && remote) {
+      // 本地刚做过物理清理（墓碑已被移除），而远端还带着它：
+      // 采纳就等于撤销清理，因此这里不采纳，并记账便于追溯。
+      if (options.purged?.has(id)) {
+        conflicts.push({
+          entity,
+          id,
+          label: labelOf(remote),
+          kept: 'local',
+          reason: 'purged',
+          // 本地已无这条记录，没有本地时间戳
+          localUpdatedAt: '',
+          remoteUpdatedAt: remote.updatedAt,
+          at: options.now,
+        });
+        continue;
+      }
       values.push(remote);
       continue;
     }

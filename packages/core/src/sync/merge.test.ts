@@ -204,6 +204,31 @@ describe('findStaleOutboxIds', () => {
   });
 });
 
+describe('mergeItems · 已清理的墓碑（purged）', () => {
+  it('本地物理清理过 → 远端仍带墓碑也不采纳，避免"墓碑复活"', () => {
+    const remote = item({ id: 'a', deletedAt: T2, updatedAt: T2 });
+    const result = mergeItems([], [remote], options({ purged: new Set(['a']) }));
+
+    expect(result.values).toHaveLength(0);
+    expect(result.conflicts[0]?.reason).toBe('purged');
+    expect(result.conflicts[0]?.kept).toBe('local');
+  });
+
+  it('不在 purged 集合里的远端记录照常保留', () => {
+    const purged = item({ id: 'a', deletedAt: T2, updatedAt: T2 });
+    const other = item({ id: 'b', title: '别人的记录', updatedAt: T2 });
+    const result = mergeItems([], [purged, other], options({ purged: new Set(['a']) }));
+
+    expect(result.values.map((v) => v.id)).toEqual(['b']);
+  });
+
+  it('未提供 purged 时行为不变', () => {
+    const remote = item({ id: 'a', deletedAt: T2, updatedAt: T2 });
+    const result = mergeItems([], [remote], options());
+    expect(result.values.map((v) => v.id)).toEqual(['a']);
+  });
+});
+
 describe('stableStringify', () => {
   it('键顺序不同但内容相同 → 序列化结果一致', () => {
     expect(stableStringify({ a: 1, b: 2 })).toBe(stableStringify({ b: 2, a: 1 }));

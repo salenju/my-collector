@@ -187,6 +187,19 @@ export class SyncEngine {
     return new Set(rows.map((row) => row.entityId));
   }
 
+  /**
+   * 本地已「清理墓碑」但还没推送成功的条目 id。
+   * 拉取时交给 merge 拦住"远端墓碑复活"（否则清理会被下一次同步撤销）。
+   */
+  async purgedIds(): Promise<Set<string>> {
+    const rows = await this.db.outbox.toArray();
+    const ids = new Set<string>();
+    for (const row of rows) {
+      for (const id of row.purgedIds ?? []) ids.add(id);
+    }
+    return ids;
+  }
+
   // ────────────────────────────── 启动 ──────────────────────────────
 
   /** 应用启动：先渲染本地（由上层负责），再后台拉取 */
@@ -358,6 +371,7 @@ export class SyncEngine {
         policy: this.getMergePolicy(),
         now: nowIso(),
         pending: await this.pendingIds(),
+        purged: await this.purgedIds(),
       };
       const conflicts: MergeConflict[] = [];
       let skipped = 0;
@@ -641,6 +655,8 @@ export class SyncEngine {
     for (const op of ops) {
       if (op.entity === 'tag') needTags = true;
       if (op.entity === 'meta') needMeta = true;
+      // 清理墓碑：条目行已物理删除，只能按 outbox 里登记的分片整片重写
+      if (op.entity === 'shard' && /^\d{4}-\d{2}$/.test(op.entityId)) months.add(op.entityId);
     }
 
     for (const month of [...months].sort()) {
@@ -678,10 +694,14 @@ export class SyncEngine {
     const device = this.getDevice();
     const itemOps = ops.filter((op) => op.entity === 'item');
     const tagOps = ops.filter((op) => op.entity === 'tag');
-    const header = `sync: ${itemOps.length} 条条目, ${tagOps.length} 个标签 [device:${device.name || device.id}]`;
+    const shardOps = ops.filter((op) => op.entity === 'shard');
+    // 分片重写（清理墓碑）时条目数可能是 0，单独点出来，否则提交信息看着像是空提交
+    const purgeNote = shardOps.length > 0 ? `, ${shardOps.length} 个分片重写` : '';
+    const header = `sync: ${itemOps.length} 条条目, ${tagOps.length} 个标签${purgeNote} [device:${device.name || device.id}]`;
     const lines = ops.map((op) => {
       const mark = op.action === 'delete' ? '-' : '±';
-      return `${mark} ${op.entity}\t${op.entityId}`;
+      const purged = op.purgedIds?.length ? `（清理墓碑 ${op.purgedIds.length} 条）` : '';
+      return `${mark} ${op.entity}\t${op.entityId}${purged}`;
     });
     return [header, '', ...lines].join('\n');
   }
