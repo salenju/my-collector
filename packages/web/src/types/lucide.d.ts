@@ -35,6 +35,7 @@ declare module '@lucide/vue' {
   export const LogOut: Component;
   export const Sun: Component;
   export const Moon: Component;
+  export const MonitorSmartphone: Component;
   export const Menu: Component;
   export const EllipsisVertical: Component;
   export const ArrowLeft: Component;

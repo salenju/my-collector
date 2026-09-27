@@ -57,12 +57,14 @@ const busy = computed(() => sync.status === 'syncing');
 
 <template>
   <PopoverRoot>
+    <!-- 状态只用图标 + 颜色示意，文字说明在点开的浮层里；待推送条数是行动信号，保留 -->
     <PopoverTrigger
-      class="inline-flex min-h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition hover:opacity-90"
+      class="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-medium transition hover:opacity-90"
       :class="TONE_CLASS[sync.meta.tone]"
+      :title="sync.meta.label"
+      :aria-label="`同步状态：${sync.meta.label}${sync.pendingCount > 0 ? `，待推送 ${sync.pendingCount} 条` : ''}`"
     >
-      <component :is="icon" class="h-3.5 w-3.5" :class="busy ? 'animate-spin' : ''" />
-      <span>{{ sync.meta.label }}</span>
+      <component :is="icon" class="h-4 w-4" :class="busy ? 'animate-spin' : ''" />
       <span v-if="sync.pendingCount > 0" class="tabular-nums opacity-80">
         ({{ sync.pendingCount }})
       </span>

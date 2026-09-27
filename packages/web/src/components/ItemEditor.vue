@@ -268,7 +268,12 @@ defineExpose({ submit });
           placeholder="https://example.com/article"
           @update:model-value="onUrlInput"
         />
-        <AppButton :disabled="!isSafeUrl(normalizeUrl(url)) || fetchState === 'loading'" @click="runFetch">
+        <!-- 固定最小宽度：抓取中会多出一个 spinner，避免按钮宽度抖动挤压输入框 -->
+        <AppButton
+          class="min-w-36 shrink-0 whitespace-nowrap"
+          :disabled="!isSafeUrl(normalizeUrl(url)) || fetchState === 'loading'"
+          @click="runFetch"
+        >
           <Sparkles class="h-4 w-4" />
           抓取标题
         </AppButton>
