@@ -40,6 +40,7 @@ jobs:
           test -f packages/extension/dist/manifest.json
           test -f packages/extension/dist/background.js
           test -f packages/extension/dist/popup.html
+          test -f packages/extension/dist/sidepanel.html
           test -f packages/extension/dist/options.html
           node -e "JSON.parse(require('fs').readFileSync('packages/extension/dist/manifest.json','utf8'))"
           echo "manifest 与入口文件齐备"

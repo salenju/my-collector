@@ -19,12 +19,21 @@
       "128": "icons/128.png"
     }
   },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
   "options_page": "options.html",
-  "permissions": ["activeTab", "scripting", "storage", "contextMenus"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "contextMenus",
+    "sidePanel"
+  ],
   "host_permissions": ["https://api.github.com/*"],
   "commands": {
     "quick-save": {

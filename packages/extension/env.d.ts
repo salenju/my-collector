@@ -15,6 +15,7 @@ declare module '@lucide/vue' {
   export const Key: Component;
   export const Link2: Component;
   export const LoaderCircle: Component;
+  export const RefreshCw: Component;
   export const Save: Component;
   export const Settings: Component;
   export const StickyNote: Component;

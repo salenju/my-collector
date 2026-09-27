@@ -1,7 +1,7 @@
 import { createApp } from 'vue';
 import '../styles.css';
 import { applyExtensionTheme } from '../shared/theme';
-import PopupApp from './PopupApp.vue';
+import PanelApp from './PanelApp.vue';
 
 applyExtensionTheme();
-createApp(PopupApp).mount('#app');
+createApp(PanelApp).mount('#app');

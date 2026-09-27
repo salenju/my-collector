@@ -1,7 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: 'class',
-  content: ['./popup.html', './options.html', './src/**/*.{vue,ts}'],
+  content: ['./popup.html', './sidepanel.html', './options.html', './src/**/*.{vue,ts}'],
   theme: {
     extend: {
       colors: {
