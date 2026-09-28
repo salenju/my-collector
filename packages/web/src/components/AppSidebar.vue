@@ -1,14 +1,18 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { Archive, FolderOpen, Link2, ListFilter, Settings, StickyNote, Tag } from '@lucide/vue';
-import { RouterLink } from 'vue-router';
+import { RouterLink, useRoute, useRouter } from 'vue-router';
 import type { ItemType } from '@my-collector/core';
+import { useAppStore } from '@/stores/app';
 import { useItemsStore } from '@/stores/items';
 import { useTagsStore } from '@/stores/tags';
 import TagChip from './TagChip.vue';
 
+const app = useAppStore();
 const items = useItemsStore();
 const tags = useTagsStore();
+const route = useRoute();
+const router = useRouter();
 
 interface NavEntry {
   key: string;
@@ -34,10 +38,30 @@ function isActive(entry: NavEntry): boolean {
   );
 }
 
+/**
+ * 侧栏只负责筛选：若当前不在列表页（如设置/标签/详情页），点击后必须回到列表页，
+ * 否则筛选状态虽然变了，页面却没有任何反应；移动端抽屉同时关闭。
+ */
+function goToList(): void {
+  app.sidebarOpen = false;
+  if (route.path !== '/') void router.push('/');
+}
+
 function select(entry: NavEntry): void {
   items.setArchived(entry.archived);
   items.setType(entry.type);
   items.clearTags();
+  goToList();
+}
+
+function selectTag(tagId: string): void {
+  items.toggleTag(tagId);
+  goToList();
+}
+
+function clearFilters(): void {
+  items.resetFilter();
+  goToList();
 }
 
 const sortedTags = computed(() =>
@@ -96,7 +120,7 @@ const filterActive = computed(
                 ? 'bg-brand/10 font-medium text-ink'
                 : 'text-muted hover:bg-elevated hover:text-ink'
             "
-            @click="items.toggleTag(tag.id)"
+            @click="selectTag(tag.id)"
           >
             <span class="min-w-0 flex-1 text-left">
               <TagChip :tag="tag" :interactive="false" />
@@ -110,7 +134,7 @@ const filterActive = computed(
     <div v-if="filterActive" class="divider pt-3">
       <button
         class="flex min-h-10 w-full items-center gap-2 rounded-lg px-2.5 text-sm text-muted transition hover:bg-elevated hover:text-ink"
-        @click="items.resetFilter()"
+        @click="clearFilters"
       >
         <ListFilter class="h-4 w-4" />
         清空筛选条件

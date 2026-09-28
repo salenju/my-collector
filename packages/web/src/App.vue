@@ -62,12 +62,12 @@ function onSearchEnter(event: KeyboardEvent): void {
   submitSearch();
 }
 
-/** 移动端底部导航：新建是动作入口，与三个浏览入口并列在最后 */
+/** 移动端底部导航：新建是动作入口，设置固定在最右侧 */
 const mobileTabs = [
   { to: "/", label: "列表", icon: FolderOpen },
   { to: "/tags", label: "标签", icon: Tag },
-  { to: "/settings", label: "设置", icon: Settings },
   { to: "/new", label: "新建", icon: Plus },
+  { to: "/settings", label: "设置", icon: Settings },
 ];
 
 function isTabActive(path: string): boolean {
