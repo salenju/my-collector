@@ -21,6 +21,8 @@ export interface GhResponse<T> {
   etag: string | null;
   rateLimitRemaining: number | null;
   rateLimitResetAt: number | null;
+  /** `responseType='bytes'` 时的原始字节（图片读取用） */
+  bytes?: ArrayBuffer;
 }
 
 export interface GhRequestInit {
@@ -30,6 +32,14 @@ export interface GhRequestInit {
   /** 条件请求：命中则返回 304 且不计入限流额度 */
   etag?: string | null;
   signal?: AbortSignal;
+  /**
+   * 覆盖默认的 `accept`。
+   * 图片读取用 `application/vnd.github.raw`——直接拿原始字节，省掉 base64 的 33% 膨胀，
+   * 也不受 Contents API「>1MB 不返回 content」的限制。
+   */
+  accept?: string;
+  /** `'bytes'` 时走 `arrayBuffer()`，不做 text/JSON 解析 */
+  responseType?: 'json' | 'bytes';
 }
 
 function numHeader(response: Response, name: string): number | null {
@@ -87,7 +97,7 @@ function buildError(
 
 export async function ghRequest<T>(path: string, init: GhRequestInit = {}): Promise<GhResponse<T>> {
   const headers: Record<string, string> = {
-    accept: 'application/vnd.github+json',
+    accept: init.accept ?? 'application/vnd.github+json',
     'x-github-api-version': API_VERSION,
   };
   if (init.token) headers.authorization = `Bearer ${init.token}`;
@@ -117,6 +127,31 @@ export async function ghRequest<T>(path: string, init: GhRequestInit = {}): Prom
     return { status: 304, data: undefined as T, etag, rateLimitRemaining: remaining, rateLimitResetAt: resetAt };
   }
 
+  if (!response.ok) {
+    // 出错时仍然按 JSON 解析，好让 buildError 能取到 GitHub 的 message
+    const errorText = await response.text();
+    let errorPayload: unknown = null;
+    if (errorText) {
+      try {
+        errorPayload = JSON.parse(errorText);
+      } catch {
+        errorPayload = errorText;
+      }
+    }
+    throw buildError(response.status, path, errorPayload, response, remaining, resetAt);
+  }
+
+  if (init.responseType === 'bytes') {
+    return {
+      status: response.status,
+      data: undefined as T,
+      bytes: await response.arrayBuffer(),
+      etag,
+      rateLimitRemaining: remaining,
+      rateLimitResetAt: resetAt,
+    };
+  }
+
   const text = await response.text();
   let payload: unknown = null;
   if (text) {
@@ -125,10 +160,6 @@ export async function ghRequest<T>(path: string, init: GhRequestInit = {}): Prom
     } catch {
       payload = text;
     }
-  }
-
-  if (!response.ok) {
-    throw buildError(response.status, path, payload, response, remaining, resetAt);
   }
 
   return { status: response.status, data: payload as T, etag, rateLimitRemaining: remaining, rateLimitResetAt: resetAt };

@@ -5,13 +5,90 @@
  * 避免两端字段理解不一致导致同步时互相覆盖。
  */
 
-/** 当前 schema 版本，写入 meta.json；远端更高时进入只读模式 */
-export const CURRENT_SCHEMA_VERSION = 1;
+/**
+ * 当前 schema 版本，写入 meta.json；远端更高时进入只读模式。
+ *
+ * v2：Item 新增 `assets`（附件图片，见 docs/tec/10-图片功能设计.md §3.3）。
+ *
+ * 为什么这个版本号必须升：`normalizeItem` 是**白名单式重建**，不认识 `assets` 的旧版本
+ * 在 pull 之后重写分片时会把该字段静默抹掉（数据丢失）。升版本后旧客户端读到
+ * 「远端 2 > 本地 1」会进入只读模式，不再覆盖数据——这正是 02 文档 §4.3 预留的机制。
+ */
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /** 单个文件内部的结构版本 */
 export const FILE_VERSION = 1;
 
 export type ItemType = 'link' | 'note';
+
+/** 允许入库的图片类型（png 保留透明通道，因此不与 jpeg 合并） */
+export type ImageMime = 'image/jpeg' | 'image/png';
+
+/**
+ * 附件图片的数值边界 —— **单一真源**：校验（guards）、压缩（assets）、UI 三处都读这里，
+ * 避免"UI 允许但校验拒绝"这类不一致。
+ */
+export const ASSET_LIMITS = {
+  /** 单条条目最多几张图（一次提交的 blob 请求数 = 图片数） */
+  maxPerItem: 20,
+  /** 允许上传的源文件上限；超过直接拒绝，避免解码一张 200MB 的图把内存打爆 */
+  maxSourceBytes: 20 * 1024 * 1024,
+  /** 压缩后仍超过此值就拒绝入库 */
+  maxStoredBytes: 1024 * 1024,
+  /** 压缩目标：超过则按阶梯继续降质/降尺寸（见 assets/image.ts） */
+  targetBytes: 800 * 1024,
+  /** 缩略图最长边 */
+  thumbEdge: 320,
+  /** 文件名保留长度 */
+  nameLength: 120,
+} as const;
+
+export type AssetMaxEdge = 1600 | 2048 | 2560;
+
+export const ASSET_MAX_EDGES: readonly AssetMaxEdge[] = [1600, 2048, 2560];
+
+/**
+ * 附件图片（条目附件形态，见 10 文档 §0 Q1）。
+ *
+ * 设计要点：`id` 是**内容 sha256 前 32 位**，因此图片不可变、天然去重，
+ * 多端同步时永远不会冲突（冲突矩阵不需要为图片新增任何一条）。
+ */
+export interface ItemAsset {
+  /** 内容 sha256 十六进制前 32 位（128 bit）。既是去重键，也是仓库文件名 */
+  id: string;
+  /** 用户原始文件名，仅用于下载与展示（不参与仓库路径，避免特殊字符进 Git 路径） */
+  name: string;
+  /** 压缩后的字节数 */
+  size: number;
+  /** 压缩后的像素尺寸：列表按此比例占位，避免图片加载完成后布局跳动 */
+  width: number;
+  height: number;
+  /** 压缩后的 MIME */
+  mime: ImageMime;
+  /**
+   * 可选直链。`GithubAssetStore` **永不写它**（URL 由带鉴权的读取派生）；
+   * 将来接图床/对象存储时由该实现写入，`resolve()` 优先返回它。
+   * 现在预留是为了避免到时候再升一次 schema。
+   */
+  url?: string;
+}
+
+/** 图片相关的本地设置（见 10 文档 §9.4） */
+export interface AssetsSettings {
+  /** 关闭后原样上传（仅 jpeg/png 可通过），并显著加快仓库增长 */
+  autoCompress: boolean;
+  maxEdge: AssetMaxEdge;
+  quality: number;
+  /** 本地图片缓存预算（字节），LRU 淘汰时参考 */
+  cacheBudgetBytes: number;
+}
+
+export const DEFAULT_ASSETS_SETTINGS: AssetsSettings = {
+  autoCompress: true,
+  maxEdge: 2048,
+  quality: 0.8,
+  cacheBudgetBytes: 200 * 1024 * 1024,
+};
 
 export type ItemSource = 'web' | 'bookmarklet' | 'extension' | 'share' | 'import';
 
@@ -50,6 +127,11 @@ export interface Item {
   favicon?: string;
   /** 引用的标签 ID 列表 */
   tagIds: string[];
+  /**
+   * 附件图片（v2 新增，顺序即展示顺序）。
+   * 缺省表示没有图片——**不用空数组**，避免无意义的 diff。
+   */
+  assets?: ItemAsset[];
   source: ItemSource;
   /** ISO 8601 UTC，同时决定所属分片 */
   createdAt: string;
@@ -110,6 +192,11 @@ export interface RemoteSnapshot {
   treeSha: string | null;
   /** 路径 → blob sha */
   files: Record<string, string>;
+  /**
+   * 路径 → 字节数（来自 Trees 响应的 `size`）。
+   * 用于在设置页展示"数据仓库里的图片占用"而**不需要额外请求**（10 文档 §9.4）。
+   */
+  sizes?: Record<string, number>;
   fetchedAt: string;
 }
 

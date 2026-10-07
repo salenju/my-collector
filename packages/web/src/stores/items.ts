@@ -5,6 +5,7 @@ import {
   collectTagCounts,
   filterItems,
   type Item,
+  type ItemAsset,
   type ItemDraft,
   type ItemFilter,
   type ItemType,
@@ -114,6 +115,12 @@ export const useItemsStore = defineStore('items', {
 
     async removeItem(id: string) {
       await collector.repo.deleteItem(id);
+      await refreshData();
+    },
+
+    /** 只改图片引用（拖入/移除图片后立即保存，与标签的"即时保存"体验一致） */
+    async updateItemAssets(id: string, assets: ItemAsset[]) {
+      await collector.repo.updateItem(id, { assets });
       await refreshData();
     },
 

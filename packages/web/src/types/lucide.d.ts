@@ -55,4 +55,12 @@ declare module '@lucide/vue' {
   export const Wifi: Component;
   export const Sparkles: Component;
   export const WandSparkles: Component;
+  // 附件图片（PRD-1007）用到的图标
+  export const ImagePlus: Component;
+  export const ImageOff: Component;
+  export const Images: Component;
+  export const ChevronLeft: Component;
+  export const Maximize2: Component;
+  export const HardDrive: Component;
+  export const Trash2: Component;
 }

@@ -28,6 +28,8 @@ import { useToast } from '@/composables/useToast';
 import ItemEditor from '@/components/ItemEditor.vue';
 import ItemList from '@/components/ItemList.vue';
 import TagPicker from '@/components/TagPicker.vue';
+import AssetThumb from '@/components/AssetThumb.vue';
+import AssetLightbox from '@/components/AssetLightbox.vue';
 import AppButton from '@/components/ui/AppButton.vue';
 import AppBadge from '@/components/ui/AppBadge.vue';
 import AppConfirmDialog from '@/components/ui/AppConfirmDialog.vue';
@@ -46,6 +48,15 @@ const editing = ref(false);
 const confirmDelete = ref(false);
 const tagDraft = ref<string[]>([]);
 let tagSaveTimer: number | undefined;
+
+/** 图片灯箱：只加载当前这一张的原图 */
+const lightboxOpen = ref(false);
+const lightboxIndex = ref(0);
+
+function openLightbox(index: number): void {
+  lightboxIndex.value = index;
+  lightboxOpen.value = true;
+}
 
 const item = computed(() => items.byId(props.id));
 const itemTags = computed(() =>
@@ -193,6 +204,20 @@ function historyUrl(): string {
               {{ item.content }}
             </p>
 
+            <!-- 附件图片（PRD-1007）：点击开灯箱，原图只在点开时才拉取 -->
+            <div v-if="(item.assets ?? []).length > 0" class="mt-4">
+              <span class="label mb-0">图片（{{ (item.assets ?? []).length }}）</span>
+              <div class="mt-1.5 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                <AssetThumb
+                  v-for="(asset, index) in item.assets"
+                  :key="asset.id"
+                  :asset="asset"
+                  :pending="pending"
+                  @open="openLightbox(index)"
+                />
+              </div>
+            </div>
+
             <div class="mt-4">
               <span class="label">标签</span>
               <TagPicker :model-value="tagDraft" @update:model-value="onTagsChange" />
@@ -257,6 +282,13 @@ function historyUrl(): string {
         </div>
       </aside>
     </div>
+
+    <AssetLightbox
+      v-if="item && (item.assets ?? []).length > 0"
+      v-model:index="lightboxIndex"
+      v-model:open="lightboxOpen"
+      :assets="item.assets ?? []"
+    />
 
     <AppConfirmDialog
       v-model:open="confirmDelete"

@@ -9,7 +9,7 @@
  * 空仓库（尚无任何提交）走 POST /git/refs 创建分支。
  */
 import type { RemoteFileEntry } from '../model/types';
-import { encodeBase64Utf8 } from '../utils/base64';
+import { encodeBase64Bytes, encodeBase64Utf8 } from '../utils/base64';
 import { mapLimit } from '../utils/limit';
 import type { AtomicFileWrite } from './contents';
 import { GhError } from './errors';
@@ -123,11 +123,13 @@ export class GitDataApi {
 
     const { head } = input;
 
-    // 每个文件一个 blob（并发 3，保持顺序）
+    // 每个文件一个 blob（并发 3，保持顺序）。
+    // 文本走 UTF-8 安全的编码器，二进制附件走字节编码器——两者不可互换。
     const blobs = await mapLimit(input.files, 3, async (file) => {
+      const content = 'bytes' in file ? encodeBase64Bytes(file.bytes) : encodeBase64Utf8(file.text);
       const response = await this.http.request<BlobResponse>('/git/blobs', {
         method: 'POST',
-        body: { content: encodeBase64Utf8(file.text), encoding: 'base64' },
+        body: { content, encoding: 'base64' },
       });
       return { path: file.path, sha: response.data.sha };
     });

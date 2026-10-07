@@ -4,10 +4,12 @@
  * 所有写操作：单个 Dexie 事务内「写业务数据 + 写 outbox」→ 立即返回成功（乐观更新）
  * → 由同步引擎 debounce 后异步推送。UI 只与这里交互，不直接碰 Dexie 或网络。
  */
-import { assertItem, assertTag } from '../model/guards';
+import type { AssetService } from '../assets/types';
+import { assertItem, assertTag, normalizeAssets } from '../model/guards';
 import {
   TAG_COLORS,
   type Item,
+  type ItemAsset,
   type ItemSource,
   type ItemType,
   type Tag,
@@ -28,6 +30,8 @@ export interface ItemDraft {
   excerpt?: string;
   favicon?: string;
   tagIds?: string[];
+  /** 附件图片（10 文档 §3.1）。传 `[]` 表示清空全部图片 */
+  assets?: ItemAsset[];
   source?: ItemSource;
   archived?: boolean;
   createdAt?: string;
@@ -69,6 +73,9 @@ function buildItem(draft: ItemDraft, now: string): Item {
   }
   if (typeof draft.excerpt === 'string') item.excerpt = draft.excerpt;
 
+  const assets = normalizeAssets(draft.assets);
+  if (assets) item.assets = assets;
+
   return item;
 }
 
@@ -76,6 +83,8 @@ export class CollectorRepository {
   constructor(
     private readonly db: CollectorDb,
     private readonly engine: SyncEngine,
+    /** 附件图片服务；缺省时图片相关的登记/清理逻辑直接跳过（不涉及图片的测试用） */
+    private readonly assets?: AssetService,
   ) {}
 
   /**
@@ -121,6 +130,25 @@ export class CollectorRepository {
     }
   }
 
+  /**
+   * 把新增的图片对象登记进待推送队列（10 文档 §6.3）。
+   *
+   * 必须与条目写在**同一个 Dexie 事务**里：否则可能出现「条目引用了图片、但图片没进队列」，
+   * 那张图将永远不会被上传。这里对同一 id 去重，避免重复入队把待同步计数撑大。
+   */
+  private async queueAssetOps(ids: readonly string[], at: string): Promise<void> {
+    const unique = [...new Set(ids)].filter((id) => id.length > 0);
+    if (unique.length === 0) return;
+    const rows = await this.db.outbox.where('entityId').anyOf(unique).toArray();
+    const queued = new Set(
+      rows.filter((row) => row.entity === 'asset').map((row) => row.entityId),
+    );
+    for (const id of unique) {
+      if (queued.has(id)) continue;
+      await this.db.outbox.add({ entity: 'asset', entityId: id, action: 'upsert', at });
+    }
+  }
+
   // ─────────────────────────── 条目 ───────────────────────────
 
   async createItem(draft: ItemDraft): Promise<Item> {
@@ -131,6 +159,7 @@ export class CollectorRepository {
     await this.db.transaction('rw', [this.db.items, this.db.outbox], async () => {
       await this.db.items.put(item);
       await this.replaceOps('item', item.id, 'upsert', now);
+      await this.queueAssetOps((item.assets ?? []).map((asset) => asset.id), now);
     });
 
     this.engine.schedulePush();
@@ -140,6 +169,7 @@ export class CollectorRepository {
   async updateItem(id: string, patch: Partial<ItemDraft>): Promise<Item> {
     const now = nowIso();
     let updated: Item | null = null;
+    let droppedAssets = false;
 
     await this.db.transaction('rw', [this.db.items, this.db.outbox], async () => {
       const existing = await this.db.items.get(id);
@@ -157,6 +187,14 @@ export class CollectorRepository {
       if (patch.archived !== undefined) merged.archived = patch.archived;
       if (patch.type !== undefined) merged.type = patch.type;
       if (patch.metadata !== undefined) merged.metadata = patch.metadata;
+
+      if (patch.assets !== undefined) {
+        // 图片的"删除"就是让数组变短：不需要墓碑，随条目 JSON 走既有的 LWW 合并（10 文档 §7.2）
+        const assets = normalizeAssets(patch.assets);
+        droppedAssets = (existing.assets?.length ?? 0) > (assets?.length ?? 0);
+        if (assets) merged.assets = assets;
+        else delete merged.assets;
+      }
 
       if (patch.url !== undefined) {
         const normalized = normalizeUrl(patch.url);
@@ -176,8 +214,12 @@ export class CollectorRepository {
       assertItem(merged);
       await this.db.items.put(merged);
       await this.replaceOps('item', id, 'upsert', now);
+      await this.queueAssetOps((merged.assets ?? []).map((asset) => asset.id), now);
       updated = merged;
     });
+
+    // 只在图片确实变少时才扫描（这是 O(条目数) 的操作）
+    if (droppedAssets) await this.assets?.sweepUnreferenced();
 
     if (!updated) throw new Error(`条目更新失败：${id}`);
     this.engine.schedulePush();
@@ -224,6 +266,8 @@ export class CollectorRepository {
       await this.queueShardRewrite(new Map([[month, [id]]]), now);
     });
 
+    // 条目被物理移除后，它引用的、尚未上传的图片就成了孤儿（仓库里已上传的图片不动）
+    await this.assets?.sweepUnreferenced();
     this.engine.schedulePush();
     this.engine.notifyLocalChange();
   }
@@ -416,6 +460,7 @@ export class CollectorRepository {
       await this.queueShardRewrite(purgedByMonth, now);
     });
 
+    await this.assets?.sweepUnreferenced();
     this.engine.schedulePush();
     this.engine.notifyLocalChange();
     return tombstones.length;

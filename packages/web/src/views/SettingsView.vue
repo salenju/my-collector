@@ -5,6 +5,7 @@ import {
   CircleAlert,
   Download,
   ExternalLink,
+  HardDrive,
   Key,
   RefreshCw,
   Save,
@@ -13,7 +14,12 @@ import {
   Trash,
 } from '@lucide/vue';
 import {
+  ASSET_MAX_EDGES,
+  ASSET_USAGE_WARN_BYTES,
   DEFAULT_METADATA_SETTINGS,
+  formatBytes,
+  remoteAssetUsage,
+  type AssetMaxEdge,
   type AuthPersist,
   type MetadataProvider,
   type MergePolicy,
@@ -130,6 +136,35 @@ async function clearMetadataCache(): Promise<void> {
   toast.success(`已清空 ${count} 条抓取缓存`);
 }
 
+// ── 图片（PRD-1007）──
+const assetCache = ref({ bytes: 0, count: 0 });
+const repoAssets = ref({ count: 0, bytes: 0 });
+
+async function refreshAssetUsage(): Promise<void> {
+  assetCache.value = await collector.assets.cacheUsage();
+  // 仓库占用直接读远端快照的 sizes（Trees 响应自带），不需要额外请求
+  const snapshot = await collector.sync.getRemoteSnapshot();
+  repoAssets.value = remoteAssetUsage(snapshot, settings.repo);
+}
+
+async function setAutoCompress(value: boolean): Promise<void> {
+  await settings.setAssets({ autoCompress: value });
+}
+
+async function setAssetMaxEdge(value: string): Promise<void> {
+  await settings.setAssets({ maxEdge: Number(value) as AssetMaxEdge });
+}
+
+async function setAssetQuality(value: string): Promise<void> {
+  await settings.setAssets({ quality: Number(value) });
+}
+
+async function clearAssetCache(): Promise<void> {
+  await collector.assets.clearCache();
+  await refreshAssetUsage();
+  toast.success('已清空本地图片缓存（未上传的图片与仓库里的图片都不受影响）');
+}
+
 // ── 同步策略 ──
 async function setMergePolicy(policy: MergePolicy): Promise<void> {
   await settings.setMergePolicy(policy);
@@ -193,6 +228,7 @@ onMounted(() => {
   customUrl.value = settings.metadata.customUrl;
   deviceName.value = settings.device.name;
   void refreshTombstones();
+  void refreshAssetUsage();
 });
 </script>
 
@@ -395,6 +431,120 @@ onMounted(() => {
       </div>
     </section>
 
+    <!-- 图片（PRD-1007） -->
+    <section class="card p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <h2 class="text-sm font-semibold">图片</h2>
+        <span class="text-xs text-muted">附件图片存在同一个数据仓库里，不需要图床</span>
+      </div>
+
+      <p class="mt-1 hint">
+        图片压缩后写入 <span class="font-mono">data/assets/</span>，与条目数据同仓库同权限。
+        列表只加载缩略图，原图点开才取回；已看过的会缓存在本机。
+      </p>
+
+      <label class="mt-3 flex items-start gap-2 text-xs">
+        <input
+          type="checkbox"
+          :checked="settings.assets.autoCompress"
+          @change="setAutoCompress(($event.target as HTMLInputElement).checked)"
+        />
+        <span>
+          上传前自动压缩（推荐）<br />
+          <span class="text-muted">
+            最长边 {{ settings.assets.maxEdge }}px、质量 {{ settings.assets.quality }}，
+            单张约 300–500KB，并另存一张缩略图供列表使用。
+          </span>
+        </span>
+      </label>
+
+      <p
+        v-if="!settings.assets.autoCompress"
+        class="mt-2 flex items-start gap-1.5 text-xs text-warn"
+      >
+        <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>已关闭自动压缩：只接受 JPEG / PNG 原样保存，会显著加快数据仓库增长。</span>
+      </p>
+
+      <div class="mt-3 grid gap-3 sm:grid-cols-2">
+        <div>
+          <label class="label" for="asset-edge">缩放尺寸</label>
+          <select
+            id="asset-edge"
+            class="field"
+            :value="String(settings.assets.maxEdge)"
+            :disabled="!settings.assets.autoCompress"
+            @change="setAssetMaxEdge(($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="edge in ASSET_MAX_EDGES" :key="edge" :value="String(edge)">
+              {{ edge }} px（最长边）
+            </option>
+          </select>
+        </div>
+        <div>
+          <label class="label" for="asset-quality">画质</label>
+          <select
+            id="asset-quality"
+            class="field"
+            :value="String(settings.assets.quality)"
+            :disabled="!settings.assets.autoCompress"
+            @change="setAssetQuality(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="0.7">低 0.7（更省空间）</option>
+            <option value="0.8">中 0.8（默认）</option>
+            <option value="0.9">高 0.9</option>
+          </select>
+        </div>
+      </div>
+
+      <dl class="mt-3 space-y-1 text-xs">
+        <div class="flex justify-between gap-3">
+          <dt class="text-muted">数据仓库里的图片</dt>
+          <dd class="tabular-nums">
+            {{ repoAssets.count }} 张 · 约 {{ formatBytes(repoAssets.bytes) }}
+          </dd>
+        </div>
+        <div class="flex justify-between gap-3">
+          <dt class="text-muted">本机图片缓存</dt>
+          <dd class="tabular-nums">
+            {{ assetCache.count }} 项 · {{ formatBytes(assetCache.bytes) }} /
+            {{ formatBytes(settings.assets.cacheBudgetBytes) }}
+          </dd>
+        </div>
+      </dl>
+
+      <p
+        v-if="repoAssets.bytes >= ASSET_USAGE_WARN_BYTES"
+        class="mt-2 flex items-start gap-1.5 text-xs text-warn"
+      >
+        <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <span>
+          仓库里的图片已接近 GitHub 的 1GB 建议上限（当前约
+          {{ formatBytes(repoAssets.bytes) }}）。建议调低尺寸或画质。
+        </span>
+      </p>
+
+      <div class="mt-3 flex flex-wrap gap-2">
+        <AppButton
+          size="sm"
+          variant="ghost"
+          :disabled="assetCache.count === 0"
+          @click="clearAssetCache"
+        >
+          <HardDrive class="h-4 w-4" />清空本地图片缓存
+        </AppButton>
+        <AppButton size="sm" variant="ghost" @click="refreshAssetUsage">
+          <RefreshCw class="h-4 w-4" />重新统计
+        </AppButton>
+      </div>
+
+      <p class="mt-2 hint">
+        「清空本地图片缓存」只删本机缓存，未上传的图片会保留，数据仓库里的图片需要时按需重新下载。
+        另外：<b class="text-ink">移除图片只是解除引用，数据仓库不会因此变小</b>
+        ——图片仍在 Git 历史里，可以找回。
+      </p>
+    </section>
+
     <!-- 同步 -->
     <section class="card p-4">
       <h2 class="text-sm font-semibold">同步</h2>
@@ -516,6 +666,8 @@ onMounted(() => {
       </div>
       <p class="mt-2 hint">
         「清理墓碑」会把已删除的记录从文件中物理移除，并在 Git 中留下一次提交（仍可找回）。
+        导出的备份是纯 JSON：<b class="text-ink">不含图片字节</b>——
+        图片本体在数据仓库里，完整备份请用 <span class="font-mono">git clone --mirror</span>。
       </p>
     </section>
 

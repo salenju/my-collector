@@ -40,7 +40,9 @@ function injectCsp(): Plugin {
     "default-src 'self'",
     "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https:",
+    // blob: 是必需的 —— 附件图片经索引缓存后以 URL.createObjectURL 渲染，
+    // 不放开这条会被 CSP 拦掉，表现为"图片全部不显示"（见 10 文档 §5.3）
+    "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
     "connect-src 'self' https://api.github.com https:",
     "manifest-src 'self'",

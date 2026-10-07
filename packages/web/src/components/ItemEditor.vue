@@ -14,15 +14,18 @@ import {
   formatRelativeTime,
   isSafeUrl,
   normalizeUrl,
+  type ItemAsset,
   type ItemDraft,
   type ItemSource,
   type ItemType,
 } from '@my-collector/core';
 import { collector } from '@/collector';
 import { useItemsStore } from '@/stores/items';
+import { useSyncStore } from '@/stores/sync';
 import { useMetadata } from '@/composables/useMetadata';
 import { useToast } from '@/composables/useToast';
 import TagPicker from './TagPicker.vue';
+import AssetDropzone from './AssetDropzone.vue';
 import AppButton from './ui/AppButton.vue';
 import AppInput from './ui/AppInput.vue';
 import AppTextarea from './ui/AppTextarea.vue';
@@ -50,6 +53,7 @@ const emit = defineEmits<{
 const DRAFT_KEY = 'new-item';
 
 const items = useItemsStore();
+const sync = useSyncStore();
 const toast = useToast();
 const { lookup } = useMetadata();
 
@@ -60,6 +64,15 @@ const content = ref(props.initial.content ?? '');
 const excerpt = ref(props.initial.excerpt ?? '');
 const favicon = ref(props.initial.favicon ?? '');
 const tagIds = ref<string[]>([...(props.initial.tagIds ?? [])]);
+/** 附件图片：已压缩并落在本地待上传表里，这里只持有元信息（见 10 文档 §6.2） */
+const assets = ref<ItemAsset[]>([...(props.initial.assets ?? [])]);
+
+const dropzone = ref<{ handlePaste: (event: ClipboardEvent) => void } | null>(null);
+
+/** 编辑器容器转发粘贴事件；拦截规则在 AssetDropzone 里（输入框内一律放行） */
+function onPaste(event: ClipboardEvent): void {
+  dropzone.value?.handlePaste(event);
+}
 
 const touched = ref({ title: false, excerpt: false, content: false });
 const fetchState = ref<'idle' | 'loading' | 'ok' | 'failed'>('idle');
@@ -157,6 +170,9 @@ function submit(): void {
     source: props.source,
   };
   if (props.initial.id) draft.id = props.initial.id;
+  // 编辑态**必须**带上（空数组 = 用户清空了图片，要落库）；
+  // 新建态没有图片就不写该字段，保持 JSON diff 干净。
+  if (assets.value.length > 0 || props.mode === 'edit') draft.assets = [...assets.value];
   if (safeUrl) {
     draft.url = safeUrl;
     if (excerpt.value) draft.excerpt = excerpt.value;
@@ -167,7 +183,7 @@ function submit(): void {
 
 async function saveDraft(): Promise<void> {
   if (props.mode !== 'create') return;
-  if (!url.value && !title.value && !content.value) return;
+  if (!url.value && !title.value && !content.value && assets.value.length === 0) return;
   await collector.repo.saveDraft(DRAFT_KEY, {
     type: type.value,
     url: url.value,
@@ -175,6 +191,8 @@ async function saveDraft(): Promise<void> {
     content: content.value,
     excerpt: excerpt.value,
     tagIds: tagIds.value,
+    // 图片字节已经在本地待上传表里，草稿只需记住"引用了哪几张"
+    assets: assets.value,
   });
 }
 
@@ -186,6 +204,7 @@ async function restoreDraft(): Promise<void> {
     content: string;
     excerpt: string;
     tagIds: string[];
+    assets?: ItemAsset[];
   }>(DRAFT_KEY);
   if (!draft) return;
   type.value = draft.type ?? 'link';
@@ -194,6 +213,7 @@ async function restoreDraft(): Promise<void> {
   content.value = draft.content ?? '';
   excerpt.value = draft.excerpt ?? '';
   tagIds.value = draft.tagIds ?? [];
+  assets.value = draft.assets ?? [];
   draftAvailable.value = false;
   touched.value = { title: true, excerpt: true, content: true };
 }
@@ -223,7 +243,12 @@ defineExpose({ submit });
 </script>
 
 <template>
-  <form class="space-y-4" @submit.prevent="submit">
+  <!--
+    粘贴监听在**编辑器容器**上：图片粘贴可能发生在任何地方。
+    是否接管由 AssetDropzone 内的 shouldTakeOverPaste 判定（目标是输入框时一律放行，
+    否则在「正文」里粘贴文字会被这个功能打断）。
+  -->
+  <form class="space-y-4" @submit.prevent="submit" @paste="onPaste">
     <div
       v-if="draftAvailable"
       class="flex flex-wrap items-center justify-between gap-2 rounded-card border border-warn/40 bg-warn/10 p-3 text-xs"
@@ -331,6 +356,14 @@ defineExpose({ submit });
         @update:model-value="touched.content = true"
       />
     </div>
+
+    <!-- 附件图片（PRD-1007） -->
+    <AssetDropzone
+      ref="dropzone"
+      :model-value="assets"
+      :readonly="sync.readOnly"
+      @update:model-value="assets = $event"
+    />
 
     <!-- 标签 -->
     <div>

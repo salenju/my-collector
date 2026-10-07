@@ -5,10 +5,13 @@
  * 远端 JSON 一律视为「不可信输入」（可被手工编辑、可被其他版本写入）。
  */
 import {
+  ASSET_LIMITS,
   CURRENT_SCHEMA_VERSION,
   FILE_VERSION,
   TAG_COLORS,
+  type ImageMime,
   type Item,
+  type ItemAsset,
   type ItemSource,
   type ItemType,
   type ItemsFile,
@@ -69,6 +72,52 @@ function toTagColor(v: unknown): TagColor {
   return TAG_COLORS.includes(v as TagColor) ? (v as TagColor) : 'slate';
 }
 
+/** asset id 是 sha256 的十六进制前 32 位（见 10 文档 §3.1） */
+const ASSET_ID_RE = /^[0-9a-f]{32}$/;
+const IMAGE_MIMES: readonly ImageMime[] = ['image/jpeg', 'image/png'];
+
+/** 严格校验一个附件图片条目；任一处不合法即整体拒绝（由调用方剔除） */
+export function isItemAsset(v: unknown): v is ItemAsset {
+  if (!isPlainObject(v)) return false;
+  if (!isStr(v.id) || !ASSET_ID_RE.test(v.id)) return false;
+  if (!isStr(v.name)) return false;
+  if (typeof v.size !== 'number' || !Number.isInteger(v.size)) return false;
+  if (v.size <= 0 || v.size > ASSET_LIMITS.maxStoredBytes) return false;
+  if (typeof v.width !== 'number' || !Number.isInteger(v.width) || v.width <= 0) return false;
+  if (typeof v.height !== 'number' || !Number.isInteger(v.height) || v.height <= 0) return false;
+  if (!IMAGE_MIMES.includes(v.mime as ImageMime)) return false;
+  if (v.url !== undefined && !isStr(v.url)) return false;
+  return true;
+}
+
+/**
+ * 归一化 `assets`：剔除非法项 → 按 id 去重 → 按 id 升序（输出稳定，diff 干净）→ 截断到上限。
+ * 结果为空时返回 `undefined`，让调用方**不写该字段**（避免无意义 diff）。
+ */
+export function normalizeAssets(raw: unknown): ItemAsset[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const seen = new Set<string>();
+  const out: ItemAsset[] = [];
+  for (const candidate of raw) {
+    if (!isItemAsset(candidate)) continue;
+    if (seen.has(candidate.id)) continue;
+    seen.add(candidate.id);
+    const asset: ItemAsset = {
+      id: candidate.id,
+      name: clampText(candidate.name, ASSET_LIMITS.nameLength),
+      size: candidate.size,
+      width: candidate.width,
+      height: candidate.height,
+      mime: candidate.mime,
+    };
+    if (candidate.url) asset.url = candidate.url;
+    out.push(asset);
+  }
+  if (out.length === 0) return undefined;
+  out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return out.slice(0, ASSET_LIMITS.maxPerItem);
+}
+
 /**
  * 严格校验一个 Item。
  * 只校验「结构性」字段；可无损修复的文本长度问题由 normalizeItem 处理。
@@ -83,6 +132,9 @@ export function isItem(v: unknown): v is Item {
   if (v.excerpt !== undefined && !isStr(v.excerpt)) return false;
   if (v.favicon !== undefined && !isStr(v.favicon)) return false;
   if (!Array.isArray(v.tagIds) || !v.tagIds.every(isStr)) return false;
+  if (v.assets !== undefined && (!Array.isArray(v.assets) || !v.assets.every(isItemAsset))) {
+    return false;
+  }
   if (!ITEM_SOURCES.includes(v.source as ItemSource)) return false;
   if (!isIsoDate(v.createdAt) || !isIsoDate(v.updatedAt)) return false;
   if (!isBool(v.archived)) return false;
@@ -112,6 +164,9 @@ export function normalizeItem(v: Item): Item {
   if (v.url) item.url = v.url;
   if (v.favicon) item.favicon = v.favicon;
   if (v.excerpt === undefined) delete item.excerpt;
+  // 附件图片必须显式搬运：这里是白名单式重建，漏掉就会在下次 push 时把字段写没
+  const assets = normalizeAssets(v.assets);
+  if (assets) item.assets = assets;
   return item;
 }
 

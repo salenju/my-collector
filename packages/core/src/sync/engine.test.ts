@@ -5,7 +5,7 @@ import { GhHttp } from '../github/http';
 import { MemoryStore } from '../github/kv';
 import { GithubService } from '../github/service';
 import type { Item } from '../model/types';
-import { DEFAULT_REPO_CONFIG } from '../model/types';
+import { CURRENT_SCHEMA_VERSION, DEFAULT_REPO_CONFIG } from '../model/types';
 import { CollectorRepository } from '../store/repository';
 import { CollectorDb, DexieSettingsStore } from '../store/schema';
 import { SettingsService } from '../store/settings';
@@ -100,7 +100,7 @@ describe('SyncEngine · 初始化', () => {
       expect(fake.headSha()).not.toBeNull();
 
       const meta = JSON.parse(fake.files.get(metaPath(CFG)) ?? '{}');
-      expect(meta.schemaVersion).toBe(1);
+      expect(meta.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
       expect(meta.deviceNames[harness.settings.device.id]).toBeTruthy();
 
       const tags = JSON.parse(fake.files.get(tagsPath(CFG)) ?? '{}');

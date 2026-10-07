@@ -6,7 +6,10 @@
  *  2. 网络同步永远是异步的、可失败的、可重试的；
  *  3. 远端写入永远是一次原子提交（Git Data API）。
  */
+import { formatBytes } from '../assets/snapshot';
+import type { AssetService } from '../assets/types';
 import type { PatAuthProvider } from '../github/auth';
+import { fileWriteBytes, type AtomicFileWrite } from '../github/contents';
 import { humanMessage, isGhError, type GhErrorKind } from '../github/errors';
 import type { GithubService } from '../github/service';
 import { isSchemaCompatible, parseItemsFile, parseMetaFile, parseTagsFile } from '../model/guards';
@@ -25,7 +28,7 @@ import { parseJsonSafe } from '../utils/json';
 import { mapLimit, sleep } from '../utils/limit';
 import { acquireLock, type LockHandle } from './lock';
 import { findStaleOutboxIds, mergeItems, mergeTags, type MergeConflict } from './merge';
-import { metaPath, monthFromShardPath, shardPath, tagsPath } from './paths';
+import { ASSETS_DIR, metaPath, monthFromShardPath, shardPath, tagsPath } from './paths';
 import {
   defaultMeta,
   defaultTags,
@@ -79,6 +82,8 @@ export interface SyncEngineOptions {
   getConfig: () => RepoConfig;
   getDevice: () => { id: string; name: string };
   getMergePolicy: () => MergePolicy;
+  /** 附件图片存储（10 文档 §6.5）。缺省时引擎不处理图片，仅用于不涉及图片的测试 */
+  assets?: AssetService;
   onDataChanged?: () => void;
 }
 
@@ -106,6 +111,7 @@ export class SyncEngine {
   private readonly getConfig: () => RepoConfig;
   private readonly getDevice: () => { id: string; name: string };
   private readonly getMergePolicy: () => MergePolicy;
+  private readonly assets: AssetService | undefined;
   /** 拉取到新数据后的回调；可在 Pinia 就绪后再注入（见 setDataChangeHandler） */
   private onDataChanged: (() => void) | undefined;
 
@@ -136,6 +142,7 @@ export class SyncEngine {
     this.getConfig = options.getConfig;
     this.getDevice = options.getDevice;
     this.getMergePolicy = options.getMergePolicy;
+    this.assets = options.assets;
     this.onDataChanged = options.onDataChanged;
   }
 
@@ -298,7 +305,12 @@ export class SyncEngine {
 
       const listing = await this.github.git.listFiles();
       const remoteShas: Record<string, string> = {};
-      for (const entry of listing.entries) remoteShas[entry.path] = entry.sha;
+      // 顺带记下每个文件的字节数：设置页的「图片占用」靠它统计，不需要额外请求（10 文档 §9.4）
+      const remoteSizes: Record<string, number> = {};
+      for (const entry of listing.entries) {
+        remoteShas[entry.path] = entry.sha;
+        if (typeof entry.size === 'number') remoteSizes[entry.path] = entry.size;
+      }
 
       const cacheRows = await this.db.fileCache.toArray();
       const cacheMap = new Map(cacheRows.map((row) => [row.path, row]));
@@ -460,6 +472,7 @@ export class SyncEngine {
             commitSha: head.commitSha,
             treeSha: listing.treeSha,
             files: remoteShas,
+            sizes: remoteSizes,
             fetchedAt: nowIso(),
           };
           await this.db.meta.put({ key: META_KEYS.remote, value: snapshot });
@@ -481,10 +494,41 @@ export class SyncEngine {
       });
       this.emitDataChanged();
       await this.refreshPendingCount();
+      await this.ensureSchemaVersion(metaFile);
     } catch (error) {
       this.handleSyncFailure(error);
       throw error;
     }
+  }
+
+  /**
+   * 一次性的 schema 升级：把远端 `meta.json` 的 `schemaVersion` 推到当前版本（10 文档 §3.3）。
+   *
+   * 为什么必须显式做这一步：`meta.json` 只在设备名变化或初始化时被重写。
+   * 如果什么都不做，旧客户端仍然读到 `schemaVersion: 1`，于是**不会进入只读模式**；
+   * 而它的 `normalizeItem` 是白名单式重建——只要它编辑任意条目再推送，
+   * 该分片里所有 `assets` 就会被静默抹掉。走一次 meta 提交即可把这个门禁关上。
+   */
+  private async ensureSchemaVersion(metaFile: MetaFile | null): Promise<void> {
+    if (!metaFile) return;
+    if (metaFile.schemaVersion >= CURRENT_SCHEMA_VERSION) return;
+
+    const queued = await this.db.outbox.where('entityId').equals('meta').count();
+    if (queued === 0) {
+      await this.db.outbox.add({
+        entity: 'meta',
+        entityId: 'meta',
+        action: 'upsert',
+        at: nowIso(),
+      });
+      this.patch({
+        warnings: [
+          ...this.state.warnings,
+          `数据格式已升级到 v${CURRENT_SCHEMA_VERSION}（新增附件图片字段），旧版本客户端将进入只读模式。`,
+        ],
+      });
+    }
+    await this.refreshPendingCount();
   }
 
   private async readRemoteMeta(
@@ -590,13 +634,34 @@ export class SyncEngine {
     this.patch({ status: 'syncing', lastError: null });
 
     const head = await this.github.git.getHead();
+    const snapshot = ((await this.db.meta.get(META_KEYS.remote))?.value as RemoteSnapshot | undefined) ?? null;
+
+    // 附件图片与条目 JSON 一起进同一次原子提交（10 文档 §6.5）——
+    // 这样不会出现"图没上去但条目引用了它"的半成功状态。
+    const assetIds = ops.filter((op) => op.entity === 'asset').map((op) => op.entityId);
     const files = await this.renderAffectedFiles(ops, cfg);
+    if (this.assets && assetIds.length > 0) {
+      files.push(...(await this.assets.collectPending(assetIds, snapshot)));
+    }
+    if (files.length === 0) {
+      // 例如"重复上传了远端已有的图片"：没有任何内容要写，直接清队列，避免造一个空提交
+      await this.db.outbox.bulkDelete(ops.map((op) => op.seq).filter((seq): seq is number => typeof seq === 'number'));
+      await this.refreshPendingCount();
+      this.patch({ status: 'synced', lastError: null });
+      return;
+    }
 
     const result = await this.github.git.commitAtomic({
       files,
-      message: this.buildMessage(ops),
+      message: this.buildMessage(ops, files),
       head,
     });
+
+    // 先把图片标记为已上传，再清空队列：反过来的话，
+    // "队列已清但图片仍是 pending" 的窗口会让这些图片永远不会被上传。
+    if (this.assets && assetIds.length > 0) {
+      await this.assets.markPublished(assetIds);
+    }
 
     const now = nowIso();
     await this.db.transaction('rw', [this.db.outbox, this.db.fileCache, this.db.meta], async () => {
@@ -615,10 +680,13 @@ export class SyncEngine {
       }
 
       const previous = ((await this.db.meta.get(META_KEYS.remote))?.value as RemoteSnapshot | undefined) ?? null;
+      const sizes: Record<string, number> = { ...(previous?.sizes ?? {}) };
+      for (const file of files) sizes[file.path] = fileWriteBytes(file).byteLength;
       const snapshot: RemoteSnapshot = {
         commitSha: result.commitSha,
         treeSha: result.treeSha,
         files: { ...(previous?.files ?? {}), ...result.blobShas },
+        sizes,
         fetchedAt: now,
       };
       await this.db.meta.put({ key: META_KEYS.remote, value: snapshot });
@@ -639,8 +707,8 @@ export class SyncEngine {
   private async renderAffectedFiles(
     ops: readonly OutboxRow[],
     cfg: RepoConfig,
-  ): Promise<Array<{ path: string; text: string }>> {
-    const files: Array<{ path: string; text: string }> = [];
+  ): Promise<AtomicFileWrite[]> {
+    const files: AtomicFileWrite[] = [];
     const months = new Set<string>();
     let needTags = false;
     let needMeta = false;
@@ -690,17 +758,37 @@ export class SyncEngine {
     };
   }
 
-  private buildMessage(ops: readonly OutboxRow[]): string {
+  private buildMessage(ops: readonly OutboxRow[], files: readonly AtomicFileWrite[] = []): string {
     const device = this.getDevice();
     const itemOps = ops.filter((op) => op.entity === 'item');
     const tagOps = ops.filter((op) => op.entity === 'tag');
     const shardOps = ops.filter((op) => op.entity === 'shard');
+
+    // 只统计"本次真的写了文件"的图片：远端已存在的那些会被 collectPending 跳过，
+    // 计进来会让提交信息与实际改动对不上。
+    const assetFiles = files.filter((file) => file.path.includes(`${ASSETS_DIR}/`));
+    const filesFor = (id: string) => assetFiles.filter((file) => file.path.includes(id));
+    const published = ops.filter(
+      (op) => op.entity === 'asset' && filesFor(op.entityId).length > 0,
+    );
+
     // 分片重写（清理墓碑）时条目数可能是 0，单独点出来，否则提交信息看着像是空提交
     const purgeNote = shardOps.length > 0 ? `, ${shardOps.length} 个分片重写` : '';
-    const header = `sync: ${itemOps.length} 条条目, ${tagOps.length} 个标签${purgeNote} [device:${device.name || device.id}]`;
+    const assetNote = published.length > 0 ? `, ${published.length} 张图片` : '';
+    const header =
+      `sync: ${itemOps.length} 条条目, ${tagOps.length} 个标签${purgeNote}${assetNote}` +
+      ` [device:${device.name || device.id}]`;
+
     const lines = ops.map((op) => {
       const mark = op.action === 'delete' ? '-' : '±';
       const purged = op.purgedIds?.length ? `（清理墓碑 ${op.purgedIds.length} 条）` : '';
+      if (op.entity === 'asset') {
+        const size = filesFor(op.entityId).reduce(
+          (total, file) => total + fileWriteBytes(file).byteLength,
+          0,
+        );
+        return `${mark} asset\t${op.entityId}（${size > 0 ? formatBytes(size) : '已存在'}）`;
+      }
       return `${mark} ${op.entity}\t${op.entityId}${purged}`;
     });
     return [header, '', ...lines].join('\n');
@@ -910,6 +998,11 @@ export class SyncEngine {
   async getRemoteFileShas(): Promise<Record<string, string>> {
     const snapshot = (await this.db.meta.get(META_KEYS.remote))?.value as RemoteSnapshot | undefined;
     return snapshot?.files ?? {};
+  }
+
+  /** 供 UI 使用：当前远端快照（图片占用统计读它的 `sizes`，无需额外请求） */
+  async getRemoteSnapshot(): Promise<RemoteSnapshot | null> {
+    return ((await this.db.meta.get(META_KEYS.remote))?.value as RemoteSnapshot | undefined) ?? null;
   }
 
   /** 判断某条目是否在远端存在（用于 UI 展示「未同步」角标） */

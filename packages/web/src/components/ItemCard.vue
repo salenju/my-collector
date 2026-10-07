@@ -12,6 +12,7 @@ import {
 } from '@my-collector/core';
 import { avatarClass } from '@/utils/color';
 import TagChip from './TagChip.vue';
+import AssetThumb from './AssetThumb.vue';
 
 const props = withDefaults(
   defineProps<{
@@ -38,6 +39,11 @@ const relative = computed(() => formatRelativeTime(props.item.updatedAt));
 const visibleTags = computed(() => props.tags.slice(0, 3));
 const extraTagCount = computed(() => Math.max(0, props.tags.length - visibleTags.value.length));
 const avatarSeed = computed(() => host.value || props.item.id);
+
+/** 附件图片：列表只展示前 3 张缩略图（懒加载，见 10 文档 §9.2） */
+const assets = computed(() => props.item.assets ?? []);
+const visibleAssets = computed(() => assets.value.slice(0, 3));
+const extraAssetCount = computed(() => Math.max(0, assets.value.length - visibleAssets.value.length));
 </script>
 
 <template>
@@ -96,6 +102,24 @@ const avatarSeed = computed(() => host.value || props.item.id);
       <p v-else-if="item.excerpt" class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
         {{ item.excerpt }}
       </p>
+
+      <!-- 缩略图：只加载前 3 张，其余用 +N 提示（控制首次浏览的请求数） -->
+      <div v-if="visibleAssets.length > 0" class="mt-2 flex items-center gap-1.5">
+        <AssetThumb
+          v-for="asset in visibleAssets"
+          :key="asset.id"
+          :asset="asset"
+          class="h-12 w-12 shrink-0"
+          rounded="rounded-md"
+        />
+        <span
+          v-if="extraAssetCount > 0"
+          class="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-line bg-page text-xs text-muted"
+          :title="`还有 ${extraAssetCount} 张图片`"
+        >
+          +{{ extraAssetCount }}
+        </span>
+      </div>
 
       <div class="mt-2 flex flex-wrap items-center gap-2">
         <span class="text-xs text-muted">

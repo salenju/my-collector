@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import type {
+  AssetsSettings,
   AuthPersist,
   ConnectionReport,
   DeviceInfo,
@@ -17,6 +18,7 @@ export const useSettingsStore = defineStore('settings', {
     metadata: collector.settings.metadataSettings as MetadataSettings,
     mergePolicy: collector.settings.mergePolicy as MergePolicy,
     ui: collector.settings.ui as UiSettings,
+    assets: collector.settings.assetsSettings as AssetsSettings,
 
     hasToken: false,
     maskedToken: null as string | null,
@@ -47,6 +49,7 @@ export const useSettingsStore = defineStore('settings', {
       this.metadata = collector.settings.metadataSettings;
       this.mergePolicy = collector.settings.mergePolicy;
       this.ui = collector.settings.ui;
+      this.assets = collector.settings.assetsSettings;
       await this.refreshAuth();
     },
 
@@ -100,6 +103,10 @@ export const useSettingsStore = defineStore('settings', {
       applyTheme(this.ui);
     },
 
+    async setAssets(patch: Partial<AssetsSettings>) {
+      this.assets = await collector.settings.setAssetsSettings(patch);
+    },
+
     async testConnection() {
       this.testing = true;
       try {
@@ -120,12 +127,12 @@ export const useSettingsStore = defineStore('settings', {
       }
     },
 
-    /** 危险操作：清空全部本地数据 */
+    /** 危险操作：清空全部本地数据（含图片缓存与尚未上传的图片） */
     async wipeLocalData() {
       const { db } = collector;
       await db.transaction(
         'rw',
-        [db.items, db.tags, db.outbox, db.fileCache, db.meta, db.drafts, db.metadataCache],
+        [db.items, db.tags, db.outbox, db.fileCache, db.meta, db.drafts, db.metadataCache, db.assets],
         async () => {
           await Promise.all([
             db.items.clear(),
@@ -135,6 +142,7 @@ export const useSettingsStore = defineStore('settings', {
             db.meta.clear(),
             db.drafts.clear(),
             db.metadataCache.clear(),
+            db.assets.clear(),
           ]);
         },
       );

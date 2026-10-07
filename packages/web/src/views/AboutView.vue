@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ExternalLink, Globe, Lock, WifiOff } from '@lucide/vue';
+import { ExternalLink, Globe, HardDrive, Images, Lock, TriangleAlert, WifiOff } from '@lucide/vue';
 import { APP_TITLE, APP_VERSION } from '@/collector';
 import BookmarkletCard from '@/components/BookmarkletCard.vue';
 
@@ -16,7 +16,7 @@ const shortcuts: Shortcut[] = [
 ];
 
 const dataFlows = [
-  { target: 'api.github.com', content: '收藏的全部内容 + 访问令牌', canDisable: false },
+  { target: 'api.github.com', content: '收藏的全部内容（含图片）+ 访问令牌', canDisable: false },
   { target: 'r.jina.ai 等抓取服务（可选）', content: '你粘贴的网址', canDisable: true },
   { target: '收藏站点自身的域（favicon）', content: '常规图标请求，已加 no-referrer', canDisable: true },
 ];
@@ -54,6 +54,35 @@ const dataFlows = [
     </section>
 
     <BookmarkletCard />
+
+    <section class="card p-4">
+      <h2 class="text-sm font-semibold">图片是怎么存的</h2>
+      <ul class="mt-2 space-y-2 text-xs leading-relaxed text-muted">
+        <li class="flex gap-2">
+          <Images class="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand" />
+          <span>
+            图片压缩后写进<b>同一个 GitHub 私有仓库</b>的
+            <span class="font-mono">data/assets/</span> 里，和收藏数据共用一把令牌。
+            因此它<b>不是公开图片链接</b>：查看时由浏览器带上令牌取回，并缓存在本机。
+          </span>
+        </li>
+        <li class="flex gap-2">
+          <TriangleAlert class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
+          <span>
+            <b>「移除」图片只是解除引用，数据仓库不会因此变小</b>——
+            图片仍留在 Git 历史里（需要时可以找回）；真正回收空间要重写历史，
+            那会打断其他设备的同步，本应用不做。
+          </span>
+        </li>
+        <li class="flex gap-2">
+          <HardDrive class="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand" />
+          <span>
+            列表只加载缩略图、原图点开才拉取，看过的会缓存在本机。
+            换设备或清缓存后按需重新下载，占用情况可在设置页查看。
+          </span>
+        </li>
+      </ul>
+    </section>
 
     <section class="card p-4">
       <h2 class="text-sm font-semibold">快捷键</h2>

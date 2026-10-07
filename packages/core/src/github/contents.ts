@@ -5,6 +5,7 @@
  * 文件超过 1MB 时 Contents API 不返回内容，此时降级到 Git Blobs API。
  */
 import { encodeBase64Utf8, decodeBase64Utf8 } from '../utils/base64';
+import type { Bytes } from '../utils/bytes';
 import { GhError } from './errors';
 import { encodePath, type GhHttp } from './http';
 
@@ -32,9 +33,20 @@ export interface FileFetchResult {
   size: number | null;
 }
 
-export interface AtomicFileWrite {
-  path: string;
-  text: string;
+/**
+ * 一次原子提交里要写的一个文件。
+ *
+ * 文本（JSON 分片/标签/meta）用 `text`，附件图片用 `bytes`——
+ * 二者在 `commitAtomic` 里分别用 UTF-8 / 二进制安全的 base64 编码器处理
+ * （**不能混用**：`encodeBase64Utf8` 会损坏二进制，见 utils/base64.ts）。
+ */
+export type AtomicFileWrite =
+  | { path: string; text: string }
+  | { path: string; bytes: Bytes };
+
+/** 取该条目要写入的原始字节；调用方负责按类型选择编码器 */
+export function fileWriteBytes(file: AtomicFileWrite): Bytes {
+  return 'bytes' in file ? file.bytes : new TextEncoder().encode(file.text);
 }
 
 export class ContentsApi {
@@ -100,6 +112,25 @@ export class ContentsApi {
       if (error instanceof GhError && error.kind === 'not-found') return null;
       throw error;
     }
+  }
+
+  /**
+   * 读取一个二进制文件（附件图片）。
+   *
+   * 用 `application/vnd.github.raw` 让 Contents API 直接返回原始字节：
+   *  - 没有 base64 的 33% 膨胀；
+   *  - 不受「>1MB 不返回 content」的限制，因此不需要回落到 Blobs API；
+   *  - 支持 Range（将来可做渐进加载）。
+   * 注意这条路径**不能走 `getText`**，否则二进制会被当成 UTF-8 文本解码而损坏。
+   */
+  async getBytes(path: string, signal?: AbortSignal): Promise<Bytes> {
+    const response = await this.http.request<never>(`/contents/${encodePath(path)}${this.refQuery()}`, {
+      accept: 'application/vnd.github.raw',
+      responseType: 'bytes',
+      signal,
+    });
+    if (!response.bytes) throw new GhError('validation', `${path} 未返回字节内容`);
+    return new Uint8Array(response.bytes);
   }
 
   /** 文件是否存在（用于区分「未初始化」与「网络问题」） */

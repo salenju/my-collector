@@ -33,7 +33,14 @@ export const DEFAULT_ITEM_FILTER: ItemFilter = {
 /** 单条目是否命中关键词，并给出相关度分数（标题命中权重更高） */
 function scoreItem(item: Item, tagNames: readonly string[], keywords: readonly string[]): number {
   const title = item.title.toLowerCase();
-  const rest = [item.content, item.excerpt ?? '', item.url ?? '', tagNames.join(' ')]
+  const rest = [
+    item.content,
+    item.excerpt ?? '',
+    item.url ?? '',
+    tagNames.join(' '),
+    // 附件图片的文件名也参与命中：用户常常记得"那张叫 xxx 的图"
+    (item.assets ?? []).map((asset) => asset.name).join(' '),
+  ]
     .join('\n')
     .toLowerCase();
 

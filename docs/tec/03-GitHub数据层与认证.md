@@ -154,6 +154,21 @@ const tagsStale = listing.entries.find((e) => e.path === tagsPath(cfg))?.sha !==
 **大文件规避**：Contents API 对 > 1MB 的文件不返回 `content`（返回 `content: ""` + `encoding: none`）。
 按 02 文档的分片设计单文件不会到 1MB；若检测到该情况，降级用 `GET /repos/.../git/blobs/{sha}` 读取（该接口上限 100MB）。
 
+**附件图片的读取（v2）**：图片用 `Accept: application/vnd.github.raw`，让 Contents API 直接返回原始字节：
+
+```
+GET /repos/{owner}/{repo}/contents/data/assets/3f/3f8a….jpg?ref=main
+Header: Accept: application/vnd.github.raw        ← 关键
+→ 200 <原始字节>（不带 base64 包装）
+```
+
+- 没有 base64 的 33% 膨胀；
+- **不受上面那条 >1MB 的限制**，因此不需要回落 Blobs API（且支持 `Range`，将来可做渐进加载）；
+- 数据仓库是 Private，`raw.githubusercontent.com` 的裸 `<img>` 请求不带授权必然 401/404，
+  所以带鉴权走这条路径是唯一可行的展示方式（见 10 文档 §5.3）。
+
+对应实现：`ContentsApi.getBytes()`；`GhRequestInit` 增加 `accept` 与 `responseType: 'bytes'`。
+
 ## 4. 写入（原子提交）
 
 ### 4.1 为什么不用 Contents API 写多文件
@@ -195,6 +210,11 @@ const tagsStale = listing.entries.find((e) => e.path === tagsPath(cfg))?.sha !==
 
 **请求数**：写入 1 个分片（含 meta）= 2 blob + 1 tree + 1 commit + 1 ref = **5 次请求**；
 一般场景 3 个文件 = 3 + 3 = **6 次请求**。完全在 5000/小时限额内。
+
+**附件图片走同一个 blob 流程（v2）**：编码器换成二进制安全的 base64
+（`encodeBase64Bytes`；**不能**用 `encodeBase64Utf8`——后者按 UTF-8 重编码，会把 ≥0x80 的字节改写）。
+图片字节与条目 JSON 在**同一次提交**里落地，因此不会出现"图没上去但条目引用了它"；
+且每个 blob 是独立请求，单次请求体始终只有几百 KB。1 张图 = 2 个 blob（原图 + 缩略图）。
 
 **一致性保障**
 
@@ -250,9 +270,15 @@ README.md
 | 写去抖 | 连续操作合并为一次 commit（2s debounce + 最多 5s 强制 flush） |
 | 单次原子提交 | 多文件改动合并为 1 次 commit，省掉 N-1 个 commit |
 | 并发限流 | 拉取并发上限 6，避免瞬时打满（也防浏览器连接数瓶颈） |
+| 图片索引不额外请求 | 远端图片索引直接来自已有的 Trees 响应（asset 文件名即其内容 id） |
+| 图片查看按需 + 本地缓存 | 列表只加载缩略图且懒加载；已看过的图片命中 IndexedDB 后为 0 请求 |
 
 **日常估算**：打开应用 1~3 请求（多数是 304 不计费）+ 每次保存 1 次推送（6 请求）→
 每天几十次操作 ≈ 200~400 请求，相对 5000/小时 的上限余量充足。
+
+**带图片时的估算（v2）**：新增 1 条带 3 张图 = 6 个 blob + tree/commit/ref = **9 请求**；
+首次浏览一屏 30 张缩略图 = 30 请求，再次浏览为 0。个人使用下仍远低于限额，
+但这也是"缩略图 + 懒加载 + 本地缓存"是必需而非优化的原因（10 文档 §2.2）。
 
 **触发限流时的行为**：读 `x-ratelimit-reset` 头计算出等待时间 →
 同步引擎进入 `backoff` 状态（倒计时展示在同步状态栏）→ **本地读写完全不受影响**。

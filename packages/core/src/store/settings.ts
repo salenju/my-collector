@@ -6,8 +6,10 @@
  */
 import type { KeyValueStore } from '../github/kv';
 import {
+  DEFAULT_ASSETS_SETTINGS,
   DEFAULT_METADATA_SETTINGS,
   DEFAULT_REPO_CONFIG,
+  type AssetsSettings,
   type MergePolicy,
   type MetadataSettings,
   type RepoConfig,
@@ -62,6 +64,7 @@ export class SettingsService {
   private metadataCache: MetadataSettings = DEFAULT_METADATA_SETTINGS;
   private mergePolicyCache: MergePolicy = 'delete-wins';
   private uiCache: UiSettings = DEFAULT_UI_SETTINGS;
+  private assetsCache: AssetsSettings = DEFAULT_ASSETS_SETTINGS;
   private lastSyncAtCache: string | null = null;
   private loaded = false;
 
@@ -86,6 +89,7 @@ export class SettingsService {
     this.metadataCache = { ...DEFAULT_METADATA_SETTINGS, ...((await this.store.get<MetadataSettings>(SETTINGS_KEYS.metadata)) ?? {}) };
     this.mergePolicyCache = (await this.store.get<MergePolicy>(SETTINGS_KEYS.mergePolicy)) ?? 'delete-wins';
     this.uiCache = { ...DEFAULT_UI_SETTINGS, ...((await this.store.get<UiSettings>(SETTINGS_KEYS.ui)) ?? {}) };
+    this.assetsCache = { ...DEFAULT_ASSETS_SETTINGS, ...((await this.store.get<AssetsSettings>(SETTINGS_KEYS.assets)) ?? {}) };
     this.lastSyncAtCache = (await this.store.get<string>(SETTINGS_KEYS.sync)) ?? null;
 
     this.loaded = true;
@@ -111,6 +115,10 @@ export class SettingsService {
 
   get ui(): UiSettings {
     return this.uiCache;
+  }
+
+  get assetsSettings(): AssetsSettings {
+    return this.assetsCache;
   }
 
   get lastSyncAt(): string | null {
@@ -146,6 +154,12 @@ export class SettingsService {
     this.uiCache = { ...this.uiCache, ...settings };
     await this.store.set(SETTINGS_KEYS.ui, this.uiCache);
     return this.uiCache;
+  }
+
+  async setAssetsSettings(settings: Partial<AssetsSettings>): Promise<AssetsSettings> {
+    this.assetsCache = { ...this.assetsCache, ...settings };
+    await this.store.set(SETTINGS_KEYS.assets, this.assetsCache);
+    return this.assetsCache;
   }
 
   async setLastSyncAt(iso: string): Promise<void> {

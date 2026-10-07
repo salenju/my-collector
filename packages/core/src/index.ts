@@ -4,6 +4,8 @@
  * Web 与 Chrome 扩展共用同一份「模型 / 读写 / 同步 / 合并」实现，
  * 避免两端行为漂移（见 docs/tec/01-架构总览.md §4）。
  */
+import { GithubAssetStore } from './assets/githubStore';
+import type { AssetService } from './assets/types';
 import { PatAuthProvider } from './github/auth';
 import { SessionStore, type KeyValueStore } from './github/kv';
 import { GhHttp } from './github/http';
@@ -14,6 +16,7 @@ import { CollectorDb, DexieSettingsStore } from './store/schema';
 import { SettingsService } from './store/settings';
 import { SyncEngine } from './sync/engine';
 
+export * from './assets';
 export * from './model/types';
 export * from './model/guards';
 export * from './github/errors';
@@ -33,6 +36,7 @@ export * from './sync/paths';
 export * from './search/filter';
 export * from './services/metadata';
 export * from './utils/base64';
+export * from './utils/bytes';
 export * from './utils/url';
 export * from './utils/date';
 export * from './utils/id';
@@ -54,6 +58,7 @@ export interface Collector {
   sync: SyncEngine;
   repo: CollectorRepository;
   settings: SettingsService;
+  assets: AssetService;
 }
 
 /**
@@ -75,6 +80,13 @@ export function createCollector(options: CollectorOptions = {}): Collector {
   const http = new GhHttp(auth, () => settings.repoConfig);
   const github = new GithubService(http);
 
+  const assets = new GithubAssetStore({
+    db,
+    github,
+    getConfig: () => settings.repoConfig,
+    getSettings: () => settings.assetsSettings,
+  });
+
   const sync = new SyncEngine({
     db,
     github,
@@ -82,9 +94,10 @@ export function createCollector(options: CollectorOptions = {}): Collector {
     getConfig: () => settings.repoConfig,
     getDevice: () => settings.device,
     getMergePolicy: () => settings.mergePolicy,
+    assets,
   });
 
-  const repo = new CollectorRepository(db, sync);
+  const repo = new CollectorRepository(db, sync, assets);
 
-  return { db, auth, github, sync, repo, settings };
+  return { db, auth, github, sync, repo, settings, assets };
 }
