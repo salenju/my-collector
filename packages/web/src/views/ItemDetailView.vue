@@ -144,7 +144,12 @@ function historyUrl(): string {
       </EmptyState>
     </div>
 
-    <div v-else class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_23rem]">
+    <!--
+      桌面端两栏：左侧列表**定宽**（21rem），右侧详情吃掉剩余宽度。
+      这样拖大浏览器窗口时，多出来的空间全部给详情（正文/图片/表格更需要宽度），
+      列表卡片宽度保持稳定，不会随窗口变宽而拉成一条长条。
+    -->
+    <div v-else class="grid gap-4 lg:grid-cols-[21rem_minmax(0,1fr)]">
       <!-- 桌面端保留列表，便于连续浏览 -->
       <div class="hidden min-w-0 lg:block">
         <ItemList
@@ -226,13 +231,14 @@ function historyUrl(): string {
               </div>
             </div>
 
-            <div class="mt-4">
+            <div class="mt-4 max-w-xl">
               <span class="label">标签</span>
               <TagPicker :model-value="tagDraft" @update:model-value="onTagsChange" />
               <p v-if="itemTags.length === 0" class="hint">还没有标签，输入名字回车即可创建。</p>
             </div>
 
-            <dl class="mt-4 space-y-1.5 text-xs">
+            <!-- 详情栏变宽后，元信息限宽，避免「标签—值」被拉得太开 -->
+            <dl class="mt-4 max-w-sm space-y-1.5 text-xs">
               <div class="flex justify-between gap-3">
                 <dt class="text-muted">创建时间</dt>
                 <dd>{{ formatRelativeTime(item.createdAt) }}</dd>
