@@ -1,0 +1,147 @@
+/**
+ * Markdown 渲染区排版（.md-body）。
+ *
+ * 只负责「渲染结果长什么样」；所有颜色都走 tokens.css 的语义变量，
+ * 因此深色模式自动跟随，不需要额外维护一份暗色稿。
+ *
+ * 注：这里不用 `@layer components`——它是独立 CSS 文件，没有 `@tailwind components` 指令，
+ * Tailwind 会直接报错；由 main.ts 在 tailwind.css 之后引入，顺序上已经能覆盖基础样式。
+ */
+
+.md-body {
+  @apply break-words text-sm leading-relaxed text-ink;
+}
+
+.md-body > :first-child {
+  @apply mt-0;
+}
+
+.md-body > :last-child {
+  @apply mb-0;
+}
+
+.md-body h1 {
+  @apply mb-2 mt-5 text-lg font-semibold leading-snug;
+}
+
+.md-body h2 {
+  @apply mb-2 mt-4 text-base font-semibold leading-snug;
+}
+
+.md-body h3 {
+  @apply mb-1.5 mt-3.5 text-sm font-semibold;
+}
+
+.md-body h4,
+.md-body h5,
+.md-body h6 {
+  @apply mb-1 mt-3 text-sm font-medium text-muted;
+}
+
+.md-body p {
+  @apply my-2;
+}
+
+.md-body a {
+  @apply text-brand underline decoration-brand/40 underline-offset-2 hover:decoration-brand;
+}
+
+.md-body strong {
+  @apply font-semibold;
+}
+
+.md-body em {
+  @apply italic;
+}
+
+.md-body del {
+  @apply text-muted line-through;
+}
+
+.md-body ul {
+  @apply my-2 list-disc pl-5;
+}
+
+.md-body ol {
+  @apply my-2 list-decimal pl-5;
+}
+
+.md-body li {
+  @apply my-0.5;
+}
+
+.md-body li > ul,
+.md-body li > ol {
+  @apply my-1;
+}
+
+.md-body li.md-task {
+  @apply list-none;
+}
+
+.md-body li.md-task > input[type='checkbox'] {
+  @apply mr-1.5 align-middle;
+  accent-color: rgb(var(--c-brand));
+}
+
+.md-body blockquote {
+  @apply my-3 border-l-2 border-brand/40 pl-3 text-muted;
+}
+
+.md-body blockquote p {
+  @apply my-1;
+}
+
+.md-body code {
+  @apply rounded bg-elevated px-1 py-0.5 font-mono text-[0.85em];
+}
+
+.md-body pre {
+  @apply relative my-3 overflow-x-auto rounded-lg border border-line bg-page py-2.5 pl-3 pr-10 font-mono text-xs leading-relaxed;
+}
+
+.md-body pre code {
+  @apply block bg-transparent p-0 text-xs leading-relaxed;
+}
+
+.md-body pre[data-lang]::before {
+  content: attr(data-lang);
+  @apply absolute right-2 top-1.5 text-[10px] uppercase tracking-wide text-muted;
+}
+
+.md-body hr {
+  @apply my-4 border-t border-line;
+}
+
+.md-body img {
+  @apply my-2 max-w-full rounded-lg border border-line;
+}
+
+.md-body .md-table {
+  @apply my-3 overflow-x-auto;
+}
+
+.md-body table {
+  @apply w-full border-collapse text-xs;
+}
+
+.md-body th,
+.md-body td {
+  @apply border border-line px-2 py-1.5 align-top;
+}
+
+.md-body th {
+  @apply bg-elevated font-semibold;
+}
+
+.md-body .md-align-left {
+  @apply text-left;
+}
+
+.md-body .md-align-center {
+  @apply text-center;
+}
+
+.md-body .md-align-right {
+  @apply text-right;
+}

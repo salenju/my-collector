@@ -26,6 +26,7 @@ import { useMetadata } from '@/composables/useMetadata';
 import { useToast } from '@/composables/useToast';
 import TagPicker from './TagPicker.vue';
 import AssetDropzone from './AssetDropzone.vue';
+import MarkdownEditor from './MarkdownEditor.vue';
 import AppButton from './ui/AppButton.vue';
 import AppInput from './ui/AppInput.vue';
 import AppTextarea from './ui/AppTextarea.vue';
@@ -343,15 +344,27 @@ defineExpose({ submit });
       />
     </div>
 
-    <!-- 正文 -->
+    <!-- 正文：笔记支持 Markdown（工具栏 + 预览），链接的备注保持纯文本 -->
     <div>
-      <label class="label" for="item-content">
-        {{ type === 'note' ? '内容' : '备注 / 收藏理由' }}
-      </label>
-      <AppTextarea
+      <div class="flex items-baseline justify-between gap-2">
+        <label class="label" for="item-content">
+          {{ type === 'note' ? '内容' : '备注 / 收藏理由' }}
+        </label>
+        <span v-if="type === 'note'" class="mb-1.5 text-xs text-muted">Markdown</span>
+      </div>
+      <MarkdownEditor
+        v-if="type === 'note'"
         id="item-content"
         v-model="content"
-        :rows="type === 'note' ? 8 : 4"
+        :rows="12"
+        placeholder="写点什么…试试 # 标题、- 列表、**加粗**、`代码`、> 引用"
+        @update:model-value="touched.content = true"
+      />
+      <AppTextarea
+        v-else
+        id="item-content"
+        v-model="content"
+        :rows="4"
         placeholder="写点什么…"
         @update:model-value="touched.content = true"
       />

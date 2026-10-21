@@ -24,9 +24,11 @@ import { useTagsStore } from '@/stores/tags';
 import { useSyncStore } from '@/stores/sync';
 import { useSettingsStore } from '@/stores/settings';
 import { copyText } from '@/utils/clipboard';
+import { markdownTitleOf } from '@/utils/markdown';
 import { useToast } from '@/composables/useToast';
 import ItemEditor from '@/components/ItemEditor.vue';
 import ItemList from '@/components/ItemList.vue';
+import MarkdownView from '@/components/MarkdownView.vue';
 import TagPicker from '@/components/TagPicker.vue';
 import AssetThumb from '@/components/AssetThumb.vue';
 import AssetLightbox from '@/components/AssetLightbox.vue';
@@ -67,6 +69,8 @@ const itemTags = computed(() =>
 const pending = computed(() => items.pendingSet.has(props.id));
 const host = computed(() => hostOf(item.value?.url));
 const linkSafe = computed(() => isSafeUrl(item.value?.url));
+/** 笔记没填标题时，用正文首行的纯文本兜底（去掉 Markdown 标记） */
+const fallbackTitle = computed(() => markdownTitleOf(item.value?.content ?? ''));
 
 watch(
   item,
@@ -178,7 +182,7 @@ function historyUrl(): string {
           <!-- 只读视图 -->
           <template v-if="!editing">
             <h1 class="text-base font-semibold leading-snug">
-              {{ item.title || (item.content ? item.content.split('\n')[0] : '（无标题）') }}
+              {{ item.title || fallbackTitle || '（无标题）' }}
             </h1>
 
             <a
@@ -197,12 +201,16 @@ function historyUrl(): string {
               {{ item.excerpt }}
             </p>
 
-            <p
+            <!-- 笔记正文按 Markdown 渲染；链接的备注保持纯文本（保留换行） -->
+            <div
               v-if="item.content"
-              class="mt-3 whitespace-pre-wrap break-words rounded-lg border border-line bg-page p-3 text-sm leading-relaxed"
+              class="mt-3 rounded-lg border border-line bg-page p-3"
             >
-              {{ item.content }}
-            </p>
+              <MarkdownView v-if="item.type === 'note'" :source="item.content" />
+              <p v-else class="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                {{ item.content }}
+              </p>
+            </div>
 
             <!-- 附件图片（PRD-1007）：点击开灯箱，原图只在点开时才拉取 -->
             <div v-if="(item.assets ?? []).length > 0" class="mt-4">

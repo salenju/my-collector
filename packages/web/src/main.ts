@@ -4,6 +4,7 @@ import App from './App.vue';
 import { router } from './router';
 import { useAppStore } from './stores/app';
 import './styles/tailwind.css';
+import './styles/markdown.css';
 
 const pinia = createPinia();
 const app = createApp(App);

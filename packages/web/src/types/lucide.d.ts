@@ -63,4 +63,17 @@ declare module '@lucide/vue' {
   export const Maximize2: Component;
   export const HardDrive: Component;
   export const Trash2: Component;
+  // Markdown 编辑器工具栏
+  export const Bold: Component;
+  export const Italic: Component;
+  export const Strikethrough: Component;
+  export const Code: Component;
+  export const Heading2: Component;
+  export const List: Component;
+  export const ListOrdered: Component;
+  export const ListChecks: Component;
+  export const Quote: Component;
+  export const SquareCode: Component;
+  export const Minus: Component;
+  export const Eye: Component;
 }

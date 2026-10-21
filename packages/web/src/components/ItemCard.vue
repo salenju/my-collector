@@ -2,7 +2,6 @@
 import { computed } from 'vue';
 import { Link2, StickyNote } from '@lucide/vue';
 import {
-  firstLineOf,
   formatRelativeTime,
   highlightSegments,
   hostOf,
@@ -11,6 +10,7 @@ import {
   type Tag,
 } from '@my-collector/core';
 import { avatarClass } from '@/utils/color';
+import { markdownTitleOf, markdownToPlainText } from '@/utils/markdown';
 import TagChip from './TagChip.vue';
 import AssetThumb from './AssetThumb.vue';
 
@@ -31,8 +31,11 @@ const emit = defineEmits<{
   (e: 'toggle-select'): void;
 }>();
 
-const displayTitle = computed(() => props.item.title || firstLineOf(props.item.content) || '（无标题）');
+const displayTitle = computed(
+  () => props.item.title || markdownTitleOf(props.item.content) || '（无标题）',
+);
 const isUntitled = computed(() => !props.item.title);
+const contentPreview = computed(() => markdownToPlainText(props.item.content, 200));
 const segments = computed(() => highlightSegments(displayTitle.value, splitKeywords(props.keyword)));
 const host = computed(() => hostOf(props.item.url));
 const relative = computed(() => formatRelativeTime(props.item.updatedAt));
@@ -96,8 +99,8 @@ const extraAssetCount = computed(() => Math.max(0, assets.value.length - visible
         />
       </div>
 
-      <p v-if="item.type === 'note' && item.content" class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
-        {{ item.content }}
+      <p v-if="item.type === 'note' && contentPreview" class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
+        {{ contentPreview }}
       </p>
       <p v-else-if="item.excerpt" class="mt-1 line-clamp-2 text-xs leading-relaxed text-muted">
         {{ item.excerpt }}
