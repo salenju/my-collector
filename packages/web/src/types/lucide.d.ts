@@ -76,4 +76,8 @@ declare module '@lucide/vue' {
   export const SquareCode: Component;
   export const Minus: Component;
   export const Eye: Component;
+  // 灯箱缩放（长图查看）
+  export const ZoomIn: Component;
+  export const ZoomOut: Component;
+  export const MoveHorizontal: Component;
 }
