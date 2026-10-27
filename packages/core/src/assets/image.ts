@@ -76,6 +76,28 @@ export function passthroughMime(type: string): ImageMime | null {
   return type === 'image/jpeg' || type === 'image/png' ? type : null;
 }
 
+/**
+ * 这张图是否应该**原样保存**（不重新编码）：是则返回它的 mime，否则返回 null（走压缩）。
+ *
+ * 两条规则：
+ * - 关闭自动压缩 → JPEG / PNG 一律原样存；
+ * - 开启自动压缩 → 小于 `ASSET_LIMITS.passthroughBytes` 的 JPEG / PNG 原样存。
+ *   小图二次压缩的收益很小、画质损失却很明显（截图里的文字最先糊），所以放过它们。
+ *
+ * 其他格式（webp/gif/heic…）无法原样入库：仓库里只认 jpeg/png 两种文件名与 mime，
+ * 因此仍要转码——对这些格式来说"不压缩"等于"丢掉动画/格式"，反而更糟。
+ */
+export function originalPassthroughMime(
+  file: { type: string; size: number },
+  settings: AssetsSettings,
+): ImageMime | null {
+  if (file.size <= 0) return null;
+  const mime = passthroughMime(file.type);
+  if (!mime) return null;
+  if (!settings.autoCompress) return mime;
+  return file.size < ASSET_LIMITS.passthroughBytes ? mime : null;
+}
+
 /** 等比缩放到最长边以内；**不放大**（放大只会变糊且体积更大） */
 export function fitWithin(
   width: number,
@@ -144,17 +166,19 @@ async function encodeOriginal(
   file: Blob,
   settings: AssetsSettings,
 ): Promise<CompressedImage> {
-  if (!settings.autoCompress) {
-    const mime = passthroughMime(file.type);
-    if (!mime) {
-      throw new Error('已关闭自动压缩，只能原样保存 JPEG / PNG；其他格式请先转换。');
-    }
+  const passthrough = originalPassthroughMime(file, settings);
+  if (passthrough) {
+    // 原样保存：不缩放、不重编码。宽高取解码后的尺寸（EXIF 方向已摆正），
+    // 与浏览器显示这张原图时的方向/比例一致。
     return {
       bytes: new Uint8Array(await file.arrayBuffer()),
-      mime,
+      mime: passthrough,
       width: source.width,
       height: source.height,
     };
+  }
+  if (!settings.autoCompress) {
+    throw new Error('已关闭自动压缩，只能原样保存 JPEG / PNG；其他格式请先转换。');
   }
 
   const mime = outputMimeFor(file.type);

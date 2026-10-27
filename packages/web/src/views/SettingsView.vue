@@ -14,6 +14,7 @@ import {
   Trash,
 } from '@lucide/vue';
 import {
+  ASSET_LIMITS,
   ASSET_MAX_EDGES,
   ASSET_USAGE_WARN_BYTES,
   DEFAULT_METADATA_SETTINGS,
@@ -40,6 +41,9 @@ const sync = useSyncStore();
 const items = useItemsStore();
 const toast = useToast();
 const metadataService = useMetadata();
+
+/** 「小于这个体积就不压缩」的阈值，用于界面文案（避免文案与常量脱节） */
+const passthroughMb = (ASSET_LIMITS.passthroughBytes / 1024 / 1024).toFixed(1);
 
 // ── 仓库配置 ──
 const repoForm = ref({ ...settings.repo });
@@ -439,7 +443,8 @@ onMounted(() => {
       </div>
 
       <p class="mt-1 hint">
-        图片压缩后写入 <span class="font-mono">data/assets/</span>，与条目数据同仓库同权限。
+        图片写入 <span class="font-mono">data/assets/</span>，与条目数据同仓库同权限：
+        小于 {{ passthroughMb }}MB 的原样保存，更大的才压缩。
         列表只加载缩略图，原图点开才取回；已看过的会缓存在本机。
       </p>
 
@@ -452,8 +457,9 @@ onMounted(() => {
         <span>
           上传前自动压缩（推荐）<br />
           <span class="text-muted">
-            最长边 {{ settings.assets.maxEdge }}px、质量 {{ settings.assets.quality }}，
-            单张约 300–500KB，并另存一张缩略图供列表使用。
+            超过 {{ passthroughMb }}MB 的图才压缩：最长边 {{ settings.assets.maxEdge }}px、质量
+            {{ settings.assets.quality }}，单张约 300–500KB；
+            小图原样保存，避免二次压缩把文字压糊。两种情况都会另存一张缩略图供列表使用。
           </span>
         </span>
       </label>

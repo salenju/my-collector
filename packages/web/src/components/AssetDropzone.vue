@@ -193,7 +193,8 @@ defineExpose({ handlePaste });
         <ImagePlus v-else class="h-5 w-5" />
         <span>{{ busy ? '正在压缩…' : count > 0 ? '继续添加' : '拖动图片到此处、点击选择，或直接粘贴截图' }}</span>
         <span class="text-[11px] text-muted">
-          单张 ≤ {{ Math.round(ASSET_LIMITS.maxSourceBytes / 1024 / 1024) }}MB，会自动压缩并生成缩略图
+          单张 ≤ {{ Math.round(ASSET_LIMITS.maxSourceBytes / 1024 / 1024) }}MB；小于
+          {{ (ASSET_LIMITS.passthroughBytes / 1024 / 1024).toFixed(1) }}MB 原样保存，更大的自动压缩
         </span>
       </button>
 

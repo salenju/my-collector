@@ -6,6 +6,7 @@ import {
   extFor,
   fitWithin,
   mimeForExt,
+  originalPassthroughMime,
   outputMimeFor,
   passthroughMime,
   pastedFileName,
@@ -57,8 +58,16 @@ function fakeCodec(options: FakeOptions = {}): { codec: ImageCodec; log: FakeLog
   return { codec, log };
 }
 
-function fakeFile(type = 'image/jpeg', size = 1024): File {
+/** 超过「小图原样保存」阈值的源文件：这些用例要的是"走压缩"的路径 */
+const BIG_BYTES = ASSET_LIMITS.passthroughBytes + 1;
+
+function fakeFile(type = 'image/jpeg', size = BIG_BYTES): File {
   return new File([new Uint8Array(size)], `photo.${extFor(outputMimeFor(type))}`, { type });
+}
+
+/** 小于阈值的小图（默认 400KB） */
+function smallFile(type = 'image/jpeg', size = 400 * 1024): File {
+  return fakeFile(type, size);
 }
 
 const settings: AssetsSettings = { ...DEFAULT_ASSETS_SETTINGS };
@@ -222,13 +231,85 @@ describe('prepareAsset', () => {
   });
 });
 
+describe('小图原样保存（< passthroughBytes）', () => {
+  it('不缩放、不重编码，只生成缩略图', async () => {
+    const { codec, log } = fakeCodec({ width: 1600, height: 1200 });
+    const file = smallFile('image/jpeg', 400 * 1024);
+    const result = await prepareAsset(file, settings, codec);
+
+    expect(result.original.bytes.byteLength).toBe(file.size);
+    expect(result.original).toMatchObject({ mime: 'image/jpeg', width: 1600, height: 1200 });
+    expect(log.decodes).toBe(1);
+    expect(log.encodes).toHaveLength(1); // 只有缩略图这一次编码
+    expect(log.encodes[0]?.width).toBe(320);
+  });
+
+  it('小 PNG 保持 PNG：不转 jpeg、不缩放（截图里的文字才不糊）', async () => {
+    const { codec } = fakeCodec({ width: 900, height: 700 });
+    const file = smallFile('image/png', 300 * 1024);
+    const result = await prepareAsset(file, settings, codec);
+
+    expect(result.original.mime).toBe('image/png');
+    expect(result.original.bytes.byteLength).toBe(file.size);
+    expect(result.original).toMatchObject({ width: 900, height: 700 });
+  });
+
+  it('正好等于阈值仍然压缩（阈值语义是"小于"）', async () => {
+    const { codec, log } = fakeCodec({ width: 4000, height: 3000 });
+    const file = fakeFile('image/jpeg', ASSET_LIMITS.passthroughBytes);
+    const result = await prepareAsset(file, settings, codec);
+
+    expect(result.original.bytes.byteLength).toBe(100);
+    expect(result.original.width).toBe(2048);
+    expect(log.encodes).toHaveLength(2);
+  });
+
+  it('小 webp 仍然压缩：仓库只认 jpeg/png，原样存会变成打不开的文件', async () => {
+    const { codec, log } = fakeCodec({ width: 800, height: 600 });
+    const result = await prepareAsset(smallFile('image/webp', 200 * 1024), settings, codec);
+
+    expect(result.original.mime).toBe('image/jpeg');
+    expect(log.encodes).toHaveLength(2);
+  });
+});
+
+describe('originalPassthroughMime', () => {
+  it('开启压缩时只放过小于阈值的小图', () => {
+    expect(originalPassthroughMime({ type: 'image/jpeg', size: 1024 }, settings)).toBe('image/jpeg');
+    expect(
+      originalPassthroughMime({ type: 'image/png', size: ASSET_LIMITS.passthroughBytes - 1 }, settings),
+    ).toBe('image/png');
+    expect(
+      originalPassthroughMime({ type: 'image/jpeg', size: ASSET_LIMITS.passthroughBytes }, settings),
+    ).toBeNull();
+  });
+
+  it('关闭压缩后 jpeg / png 一律原样存，其他格式仍然不放过', () => {
+    const off: AssetsSettings = { ...settings, autoCompress: false };
+    expect(originalPassthroughMime({ type: 'image/jpeg', size: 5 * 1024 * 1024 }, off)).toBe(
+      'image/jpeg',
+    );
+    expect(originalPassthroughMime({ type: 'image/webp', size: 1024 }, off)).toBeNull();
+  });
+
+  it('空文件不放过', () => {
+    expect(originalPassthroughMime({ type: 'image/jpeg', size: 0 }, settings)).toBeNull();
+  });
+});
+
 describe('ASSET_LIMITS 约束', () => {
   it('与文档承诺的数值一致（改动会被这里抓住）', () => {
     expect(ASSET_LIMITS.maxPerItem).toBe(20);
     expect(ASSET_LIMITS.maxSourceBytes).toBe(20 * 1024 * 1024);
-    expect(ASSET_LIMITS.maxStoredBytes).toBe(1024 * 1024);
+    expect(ASSET_LIMITS.passthroughBytes).toBe(1.5 * 1024 * 1024);
+    expect(ASSET_LIMITS.maxStoredBytes).toBe(1.5 * 1024 * 1024);
     expect(ASSET_LIMITS.targetBytes).toBe(800 * 1024);
     expect(ASSET_LIMITS.thumbEdge).toBe(320);
+  });
+
+  it('入库上限必须不低于原样保存阈值，否则小图会被 stage 拒掉', () => {
+    expect(ASSET_LIMITS.maxStoredBytes).toBeGreaterThanOrEqual(ASSET_LIMITS.passthroughBytes);
+    expect(ASSET_LIMITS.passthroughBytes).toBeGreaterThan(ASSET_LIMITS.targetBytes);
   });
 
   it('默认设置：开启压缩 / 2048 / 0.8 / 200MB 缓存', () => {

@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { ExternalLink, Globe, HardDrive, Images, Lock, TriangleAlert, WifiOff } from '@lucide/vue';
+import { ASSET_LIMITS } from '@my-collector/core';
 import { APP_TITLE, APP_VERSION } from '@/collector';
 import BookmarkletCard from '@/components/BookmarkletCard.vue';
+
+/** 与设置页、上传提示同一来源，避免文案与常量脱节 */
+const passthroughMb = (ASSET_LIMITS.passthroughBytes / 1024 / 1024).toFixed(1);
 
 interface Shortcut {
   keys: string;
@@ -61,8 +65,9 @@ const dataFlows = [
         <li class="flex gap-2">
           <Images class="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand" />
           <span>
-            图片压缩后写进<b>同一个 GitHub 私有仓库</b>的
+            图片写进<b>同一个 GitHub 私有仓库</b>的
             <span class="font-mono">data/assets/</span> 里，和收藏数据共用一把令牌。
+            小于 {{ passthroughMb }}MB 的图原样保存，更大的才压缩。
             因此它<b>不是公开图片链接</b>：查看时由浏览器带上令牌取回，并缓存在本机。
           </span>
         </li>

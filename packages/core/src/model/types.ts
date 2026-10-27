@@ -33,8 +33,19 @@ export const ASSET_LIMITS = {
   maxPerItem: 20,
   /** 允许上传的源文件上限；超过直接拒绝，避免解码一张 200MB 的图把内存打爆 */
   maxSourceBytes: 20 * 1024 * 1024,
-  /** 压缩后仍超过此值就拒绝入库 */
-  maxStoredBytes: 1024 * 1024,
+  /**
+   * 单张「小图」的阈值：源文件小于它就**原样保存**，不做二次压缩。
+   *
+   * 理由：一张 400KB 的截图或小照片，压到 2048/0.8 只会让文字发虚、细节变糊，
+   * 而省下的体积有限——"看不清"的代价远高于那几百 KB。只有 JPEG / PNG 能原样存
+   * （其余格式必须转码，见 assets/image.ts 的 `originalPassthroughMime`）。
+   */
+  passthroughBytes: 1.5 * 1024 * 1024,
+  /**
+   * 入库单张上限。**必须 ≥ `passthroughBytes`**，否则原样保存的小图会被这里拒掉。
+   * 压缩后的结果也过这一关（体积阶梯的目标是 `targetBytes`，正常不会到这里）。
+   */
+  maxStoredBytes: 1.5 * 1024 * 1024,
   /** 压缩目标：超过则按阶梯继续降质/降尺寸（见 assets/image.ts） */
   targetBytes: 800 * 1024,
   /** 缩略图最长边 */
